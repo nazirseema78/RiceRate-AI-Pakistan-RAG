@@ -19,6 +19,7 @@ from backend.services.rag.language import expand_query
 
 log = logging.getLogger(__name__)
 _lock = threading.Lock()
+_init_lock = threading.RLock()  # one model/store load even when many requests arrive at once
 _store = None
 _embeddings: Embeddings | None = None
 
@@ -53,19 +54,24 @@ def get_embeddings() -> Embeddings:
     global _embeddings
     if _embeddings is not None:
         return _embeddings
+    with _init_lock:
+        if _embeddings is None:
+            _embeddings = _load_embeddings()
+    return _embeddings
+
+
+def _load_embeddings() -> Embeddings:
     s = get_settings()
     if s.embedding_backend == "hash":
-        _embeddings = HashEmbeddings()
-    else:
-        try:
-            from langchain_huggingface import HuggingFaceEmbeddings
+        return HashEmbeddings()
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
 
-            _embeddings = HuggingFaceEmbeddings(model_name=s.embedding_model, model_kwargs={"device": "cpu"},
-                                                encode_kwargs={"normalize_embeddings": True})
-        except Exception as e:  # offline / model download failure
-            log.error("Sentence Transformers model unavailable (%s) - falling back to HashEmbeddings", e)
-            _embeddings = HashEmbeddings()
-    return _embeddings
+        return HuggingFaceEmbeddings(model_name=s.embedding_model, model_kwargs={"device": "cpu"},
+                                     encode_kwargs={"normalize_embeddings": True})
+    except Exception as e:  # offline / model download failure
+        log.error("Sentence Transformers model unavailable (%s) - falling back to HashEmbeddings", e)
+        return HashEmbeddings()
 
 
 def embedding_name() -> str:
@@ -75,19 +81,23 @@ def embedding_name() -> str:
 
 def get_store():
     global _store
-    if _store is None:
-        from langchain_chroma import Chroma
+    if _store is not None:
+        return _store
+    with _init_lock:
+        if _store is None:
+            from langchain_chroma import Chroma
 
-        s = get_settings()
-        Path(s.chroma_path).mkdir(parents=True, exist_ok=True)
-        _store = Chroma(collection_name=s.chroma_collection, embedding_function=get_embeddings(),
-                        persist_directory=str(s.chroma_path), collection_metadata={"hnsw:space": "cosine"})
+            s = get_settings()
+            Path(s.chroma_path).mkdir(parents=True, exist_ok=True)
+            _store = Chroma(collection_name=s.chroma_collection, embedding_function=get_embeddings(),
+                            persist_directory=str(s.chroma_path), collection_metadata={"hnsw:space": "cosine"})
     return _store
 
 
 def reset_cache() -> None:
     global _store, _embeddings
-    _store, _embeddings = None, None
+    with _init_lock:
+        _store, _embeddings = None, None
 
 
 def index_count() -> int:
