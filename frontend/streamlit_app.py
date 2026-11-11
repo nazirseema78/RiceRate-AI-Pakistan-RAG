@@ -24,6 +24,7 @@ nav = st.navigation([
     st.Page(PAGES / "4_RiceRate_AI_Chatbot.py", title="RiceRate AI Chatbot", icon="\U0001F4AC"),
     st.Page(PAGES / "5_News_and_Trends.py", title="News & Trends", icon="\U0001F4F0"),
     st.Page(PAGES / "6_Data_Source_Status.py", title="Data Source Status", icon="\U0001F6F0️"),
+    st.Page(PAGES / "7_Settings.py", title="Settings (Admin)", icon="⚙️"),
 ])
 
 with st.sidebar:

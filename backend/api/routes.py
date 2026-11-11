@@ -12,11 +12,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from backend.config import get_settings
 from backend.database.db import get_conn
-from backend.schemas.api import (BriefingResponse, ChatRequest, ChatResponse, CompareResponse, GenericListResponse,
-                                 HealthResponse, PriceListResponse, RefreshRequest, RefreshResponse)
+from backend.schemas.api import (BriefingResponse, ChatRequest, ChatResponse, CompareResponse, DataSourceKeysUpdate,
+                                 GenericListResponse, HealthResponse, LLMProviderCreate, LLMProviderUpdate, ModelListRequest,
+                                 PriceListResponse, RefreshRequest, RefreshResponse)
+from backend.services import provider_settings as ps
 from backend.services.analytics import prices as pa
 from backend.services.analytics.briefing import build_briefing
-from backend.services.rag import vectorstore
+from backend.services.rag import llm, vectorstore
 from backend.services.rag.chatbot import answer_question
 
 log = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ def health():
         n = conn.execute("SELECT COUNT(*) AS n FROM market_prices").fetchone()["n"]
     return HealthResponse(status="ok", app=get_settings().app_name, database="ok", price_observations=n,
                           vector_chunks=vectorstore.index_count(), embedding_model=vectorstore.embedding_name(),
-                          llm_provider=get_settings().llm_provider, scheduler=scheduler_info(),
+                          llm_provider=llm.chain_summary(), scheduler=scheduler_info(),
                           time_pkt=datetime.now(PKT).isoformat(timespec="seconds"))
 
 
@@ -173,3 +175,91 @@ def admin_refresh(req: RefreshRequest | None = None):
         return RefreshResponse(status="completed", results=results, index=idx)
     finally:
         _refresh_lock.release()
+
+
+@router.get("/llm/status")
+def llm_status():
+    """Public, key-free view of which AI models the chatbot will try, in order."""
+    chain = ps.active_llm_chain()
+    return {"enabled": bool(chain), "summary": llm.chain_summary(),
+            "providers": [{"name": p["name"], "tier": p["tier"], "model": p["model"], "priority": p.get("priority")} for p in chain]}
+
+
+# ------------------------------------------------------------------ admin: AI model providers + data-source keys
+def _not_found(pid: str) -> HTTPException:
+    return HTTPException(status_code=404, detail=f"No AI model provider with id {pid!r}")
+
+
+@router.get("/admin/settings", dependencies=[Depends(require_admin)])
+def admin_settings():
+    env = ps.env_llm_provider()
+    return {"llm_providers": ps.list_llm_providers(), "presets": ps.PRESETS,
+            "env_llm_provider": ps.public_provider(env) if env else None,
+            "active_chain": llm.chain_summary(), "data_source_keys": ps.data_source_keys_status(),
+            "storage": "storage/provider_settings.json on the backend (git-ignored). Keys are never sent back to the browser."}
+
+
+@router.post("/admin/llm/providers", dependencies=[Depends(require_admin)])
+def admin_add_llm_provider(req: LLMProviderCreate):
+    try:
+        return ps.add_llm_provider(req.model_dump())
+    except ps.SettingsError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.put("/admin/llm/providers/{pid}", dependencies=[Depends(require_admin)])
+def admin_update_llm_provider(pid: str, req: LLMProviderUpdate):
+    try:
+        return ps.update_llm_provider(pid, req.model_dump(exclude_unset=True))
+    except KeyError as e:
+        raise _not_found(pid) from e
+    except ps.SettingsError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.delete("/admin/llm/providers/{pid}", dependencies=[Depends(require_admin)])
+def admin_delete_llm_provider(pid: str):
+    try:
+        ps.delete_llm_provider(pid)
+    except KeyError as e:
+        raise _not_found(pid) from e
+    return {"deleted": pid}
+
+
+@router.post("/admin/llm/providers/{pid}/test", dependencies=[Depends(require_admin)])
+def admin_test_llm_provider(pid: str):
+    try:
+        provider = ps.get_llm_provider(pid, include_secrets=True)
+    except KeyError as e:
+        raise _not_found(pid) from e
+    result = llm.test_provider(provider)
+    ps.update_llm_provider(pid, {"last_test_at": ps.now_iso(), "last_test_ok": result["ok"],
+                                 "last_test_message": result["message"][:300]})
+    return result
+
+
+@router.post("/admin/llm/models", dependencies=[Depends(require_admin)])
+def admin_list_models(req: ModelListRequest):
+    if req.provider_id:
+        try:
+            provider = ps.get_llm_provider(req.provider_id, include_secrets=True)
+        except KeyError as e:
+            raise _not_found(req.provider_id) from e
+        if req.api_key:  # unsaved key typed in the edit form
+            provider = {**provider, "api_key": req.api_key}
+    else:
+        if not req.base_url or not ps.URL_RE.match(req.base_url):
+            raise HTTPException(status_code=422, detail="base_url must start with http:// or https://")
+        provider = {"base_url": req.base_url, "api_key": req.api_key or ""}
+    try:
+        return {"models": llm.list_models(provider)}
+    except llm.LLMError as e:
+        raise HTTPException(status_code=502, detail=f"Provider did not return a model list: {e}") from e
+
+
+@router.put("/admin/data-source-keys", dependencies=[Depends(require_admin)])
+def admin_set_data_source_keys(req: DataSourceKeysUpdate):
+    try:
+        return {"data_source_keys": ps.set_data_source_keys(req.values)}
+    except ps.SettingsError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e

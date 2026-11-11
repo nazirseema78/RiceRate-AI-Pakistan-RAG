@@ -17,6 +17,7 @@ os.environ.update({
     "CHROMA_PATH": str(_TMP / "chroma"),
     "SCHEDULER_LOCK_PATH": str(_TMP / "scheduler.lock"),
     "IMPORTS_DIR": str(_TMP / "imports"),
+    "PROVIDER_SETTINGS_PATH": str(_TMP / "provider_settings.json"),
     "EMBEDDING_BACKEND": "hash",
     "ENABLED_PROVIDERS": "synthetic_demo,csv_import",
     "SCHEDULER_ENABLED": "false",

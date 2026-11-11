@@ -25,6 +25,7 @@ A free-first rice **price intelligence** assistant for rice mill owners and trad
 | **RiceRate AI Chatbot** | English and Pakistani Urdu questions; sources and observation dates under every answer; chat history kept for the session |
 | **News & Trends** | 7 / 15 / 30-day changes, direction labels (Rising / Falling / Stable / Mixed / Insufficient Data) and the daily market briefing |
 | **Data Source Status** | Providers, last attempted / successful refresh, last observation, availability, errors, data type, and a token-protected, rate-limited manual refresh |
+| **Settings (Admin)** | Add, test, enable/disable and order the AI models the chatbot uses (free now, paid later), and save data-source API keys. Token-protected; keys stay on the backend |
 
 **Out of scope by design:** inventory, suppliers, CRM, accounting, invoicing, payroll, profit/break-even calculators, production.
 
@@ -146,7 +147,37 @@ source-grounded answers.
 **Regenerate the synthetic documents:** `python scripts/generate_synthetic_data.py`
 **Rebuild the notebook from source:** `python scripts/build_notebook.py`
 
-## 6. Scheduled price checks
+## 6. Settings: AI models and API keys
+
+Open **Settings (Admin)** in the app and enter your `ADMIN_TOKEN`. There are two tabs:
+
+**AI models (chatbot)**
+1. Choose a ready-made template. Free: Ollama (local, no key), Groq, OpenRouter `:free` models, Google Gemini.
+   Paid: OpenAI, Anthropic Claude. Or choose *Custom* for any other OpenAI-compatible server.
+2. Paste the API key, click **List models** to see the exact model ids the provider offers now, pick one and click **Add**.
+3. Open the provider and click **Test connection**. This sends a one-word test message.
+4. Set the **priority**: the chatbot tries the lowest number first and falls back to the next one if a provider fails.
+   Put free models first and paid ones later as a backup, or switch paid ones off until you need them.
+   Adding a paid provider asks for an explicit confirmation.
+
+With no model enabled, the chatbot still answers from the price database and documents (retrieval-only).
+Any AI answer that contains a number not found in the sources is rejected, whichever provider produced it.
+
+**Data-source API keys**: PakDataHub (AMIS Punjab wholesale prices) and the Phase 2 paid market-data provider.
+
+Where it is stored: `storage/provider_settings.json` on the backend. The file is git-ignored, like `.env`, so it is never
+committed. Values saved there override `.env`. The browser only ever sees the last 4 characters of a key.
+Free-tier limits and model names are set by each provider and change over time, so check them on the provider's site.
+
+The same actions are available as API endpoints (admin token required): `GET /api/admin/settings`,
+`POST/PUT/DELETE /api/admin/llm/providers[/{id}]`, `POST /api/admin/llm/providers/{id}/test`,
+`POST /api/admin/llm/models`, `PUT /api/admin/data-source-keys`. `GET /api/llm/status` (no token) shows the active order without keys.
+
+**Adding a provider that is not OpenAI-compatible later:** add a new `chat_completion`-style function in
+`backend/services/rag/llm.py` and select it by the provider's `preset`. Everything else (storage, fallback order, the
+Settings page, the number check) stays the same.
+
+## 7. Scheduled price checks
 
 * APScheduler runs source checks at **09:00, 12:00, 15:00 and 18:00 Pakistan Standard Time** (`SCHEDULER_HOURS`)
   while the backend is running.
@@ -161,20 +192,20 @@ source-grounded answers.
     as its own long-running service (for example with NSSM on Windows, or systemd / Docker `restart: always` on Linux).
   * Or Windows Task Scheduler: call `python -m backend.scheduler.run --once` at 09:00, 12:00, 15:00 and 18:00.
 
-## 7. API endpoints
+## 8. API endpoints
 
 `GET /api/health` · `/api/products` · `/api/markets` · `/api/prices/latest` · `/api/prices/history` ·
 `/api/prices/compare` · `/api/prices/changes` · `/api/prices/direction` · `/api/karachi/quotations` ·
 `/api/international/prices` · `/api/news/latest` · `/api/market/briefing` · `/api/sources/status` ·
-`POST /api/chat` · `POST /api/admin/refresh` (header `X-Admin-Token`, rate-limited)
+`/api/llm/status` · `POST /api/chat` · `POST /api/admin/refresh` (header `X-Admin-Token`, rate-limited) · admin settings endpoints (section 6)
 
 All inputs are validated with Pydantic and FastAPI query constraints, and all SQL uses parameter binding.
 
-## 8. Tests
+## 9. Tests
 
 ```powershell
-python -m pytest -q                 # 55 automated tests (isolated temp DB, offline embeddings, no network)
-python tests/frontend_smoke.py      # needs the backend running: renders all 6 Streamlit pages + one chat round-trip
+python -m pytest -q                 # 67 automated tests (isolated temp DB, offline embeddings, no network)
+python tests/frontend_smoke.py      # needs the backend running: renders all 7 Streamlit pages + one chat round-trip
 ```
 
 The tests cover API responses, validation, unit conversion, refused currency conversion, missing prices,
@@ -182,19 +213,20 @@ timestamps and freshness, history queries, duplicate records, market comparison,
 source attribution, synthetic labelling, routing, numeric grounding, admin auth and rate limiting, and provider
 failures (a failing connector stores nothing and logs the error).
 
-## 9. Security
+## 10. Security
 
 * `.env`, databases, vector indexes, logs, virtual environments and `data/imports/` (private business data)
   are git-ignored. `.env.example` contains placeholders only.
-* Credentials stay on the backend. The frontend only sends the admin token typed by an authorised user.
+* Credentials stay on the backend (`.env` or the git-ignored `storage/provider_settings.json`). API responses only show
+  the last 4 characters of a key, and provider error messages are scrubbed of the key.
 * External connectors use timeouts, bounded retries, rate limiting and a descriptive User-Agent.
 * Retrieved documents and web pages are treated as **untrusted data**: the LLM prompt tells the model to ignore
   instructions inside them, and generated numbers are checked against the sources.
 
-## 10. Project structure
+## 11. Project structure
 
 ```
-frontend/          streamlit_app.py, pages/ (6 pages), components/ (API client, UI)
+frontend/          streamlit_app.py, pages/ (7 pages), components/ (API client, UI)
 backend/           main.py, config.py, api/, models/, schemas/, services/{market_data,rag,news,analytics}, database/, scheduler/
 notebooks/         RiceRate_AI_Pakistan_RAG.ipynb   (homework notebook, executed)
 data/synthetic/    fictional prices, quotations and news used to seed SQLite
@@ -205,7 +237,7 @@ tests/             pytest suite + frontend smoke test
 docs/              DATA_SOURCES.md
 ```
 
-## 11. Limitations
+## 12. Limitations
 
 * Demo prices are synthetic. Real decisions need verified sources (enable PakDataHub, import authorised broker lists).
 * FS&CPD publishes a single rice item (notified retail Basmati), so it is never compared with wholesale or paddy prices.

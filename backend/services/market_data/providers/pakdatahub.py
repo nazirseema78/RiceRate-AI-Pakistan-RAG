@@ -24,6 +24,7 @@ from datetime import datetime
 
 from backend.config import get_settings
 from backend.models.price import DataNature, PriceObservation, SourceMetadata, VerificationStatus
+from backend.services.provider_settings import get_secret
 from backend.services.market_data.base import (Availability, MarketDataProvider, ProviderError, ProviderResult,
                                                RateLimiter, http_get)
 
@@ -79,6 +80,10 @@ class PakDataHubProvider(MarketDataProvider):
         self.settings = get_settings()
         self.limiter = RateLimiter(7.0)  # stay below 10 requests/minute
 
+    @property
+    def api_key(self) -> str:
+        return get_secret("pakdatahub_api_key")  # Settings page first, then .env
+
     def get_source_metadata(self) -> SourceMetadata:
         return SourceMetadata(
             provider_key=self.provider_key, name="AMIS Punjab via PakDataHub API", url="https://pakdatahub.com/docs/data-agri-prices",
@@ -88,18 +93,18 @@ class PakDataHubProvider(MarketDataProvider):
             access_notes="Free plan 500 calls/month, 10 req/min. Displaying data to customers needs Business plan/licence.")
 
     def check_availability(self) -> Availability:
-        if not self.settings.pakdatahub_api_key:
-            return Availability(False, "not_configured", "Set PAKDATAHUB_API_KEY in .env to enable (free plan available).")
+        if not self.api_key:
+            return Availability(False, "not_configured", "Add the PakDataHub key on the Settings page (or PAKDATAHUB_API_KEY in .env) to enable (free plan available).")
         # no network probe here: every call counts against the 500/month free quota
         return Availability(True, "available", "API key configured (quota-limited free plan)")
 
     def fetch_latest_prices(self) -> ProviderResult:
-        if not self.settings.pakdatahub_api_key:
+        if not self.api_key:
             raise ProviderError("PAKDATAHUB_API_KEY not configured")
         res = ProviderResult()
         for slug in list(COMMODITIES)[: self.settings.pakdatahub_max_calls_per_run]:
             r = http_get(f"{self.settings.pakdatahub_base_url}/v1/agri/latest", params={"commodity": slug},
-                         headers={"X-API-Key": self.settings.pakdatahub_api_key}, limiter=self.limiter)
+                         headers={"X-API-Key": self.api_key}, limiter=self.limiter)
             if r.status_code in (401, 402, 403, 429):
                 raise ProviderError(f"PakDataHub HTTP {r.status_code}: {r.text[:200]}")
             if not r.ok:

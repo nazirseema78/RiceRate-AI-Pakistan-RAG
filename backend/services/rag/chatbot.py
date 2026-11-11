@@ -212,13 +212,13 @@ def answer_question(question: str, history: list[dict] | None = None) -> dict:
 
     context_text = "\n---\n".join(f"[{c['source']} | {c.get('publication_date')}] {c['text']}" for c in chunks)
     facts_text = "\n".join(facts)
-    generated = llm.generate(question, facts_text, context_text, rq.language, history) if llm.llm_enabled() else None
+    generated, llm_name = llm.generate(question, facts_text, context_text, rq.language, history)
     used_llm = False
     if generated and _numbers_grounded(generated, facts_text + "\n" + context_text):
         body, used_llm = generated, True
     else:
         if generated:
-            warnings.append("LLM answer discarded because it contained numbers not found in the sources.")
+            warnings.append(f"LLM answer from {llm_name} discarded because it contained numbers not found in the sources.")
         parts = []
         if rq.route != "rag" or facts:
             parts.append(f"**{L['facts']}:**\n" + ("\n".join(f"- {f}" for f in facts) if facts else f"- {L['none']}"))
@@ -229,7 +229,7 @@ def answer_question(question: str, history: list[dict] | None = None) -> dict:
         if interp:
             parts.append(f"**{L['interp']}:**\n" + "\n".join(f"- {i}" for i in interp))
         body = "\n\n".join(parts)
-        if llm.llm_enabled() is False:
+        if not generated:
             body += f"\n\n_{L['nollm']}_"
     if warnings:
         body += "\n\n" + "\n".join(f"> {w}" for w in warnings)
@@ -244,4 +244,4 @@ def answer_question(question: str, history: list[dict] | None = None) -> dict:
             "entities": {"cities": rq.cities, "product_type": rq.product_type, "variety": rq.variety, "window_days": rq.window_days,
                          "international": rq.international},
             "facts": facts, "sources": uniq[:15], "retrieved_chunks": [{k: c[k] for k in ("source", "score", "text")} for c in chunks],
-            "used_llm": used_llm, "warnings": warnings, "contains_synthetic": flags["synthetic"]}
+            "used_llm": used_llm, "llm_provider_used": llm_name if used_llm else None, "warnings": warnings, "contains_synthetic": flags["synthetic"]}

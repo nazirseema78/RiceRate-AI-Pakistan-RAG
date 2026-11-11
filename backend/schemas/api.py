@@ -92,6 +92,7 @@ class ChatResponse(BaseModel):
     sources: list[dict[str, Any]]
     retrieved_chunks: list[dict[str, Any]]
     used_llm: bool
+    llm_provider_used: str | None = None
     warnings: list[str]
     contains_synthetic: bool
 
@@ -115,3 +116,40 @@ class RefreshResponse(BaseModel):
     status: str
     results: list[dict[str, Any]]
     index: dict[str, Any] | None = None
+
+
+# ---------------------------------------------------------------- admin settings (AI models + data-source keys)
+class LLMProviderCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    preset: str = Field("custom", max_length=40)
+    tier: str = Field("free", pattern="^(free|paid)$")
+    base_url: str = Field(..., min_length=8, max_length=300)
+    model: str = Field(..., min_length=1, max_length=200)
+    api_key: str | None = Field(None, max_length=500)
+    enabled: bool = True
+    priority: int = Field(10, ge=0, le=999)
+    notes: str | None = Field(None, max_length=500)
+
+
+class LLMProviderUpdate(BaseModel):
+    """Every field is optional. api_key: omit = keep the stored key, "" = remove it."""
+    name: str | None = Field(None, min_length=1, max_length=80)
+    tier: str | None = Field(None, pattern="^(free|paid)$")
+    base_url: str | None = Field(None, min_length=8, max_length=300)
+    model: str | None = Field(None, min_length=1, max_length=200)
+    api_key: str | None = Field(None, max_length=500)
+    enabled: bool | None = None
+    priority: int | None = Field(None, ge=0, le=999)
+    notes: str | None = Field(None, max_length=500)
+
+
+class ModelListRequest(BaseModel):
+    """List models for a saved provider (provider_id) or for unsaved form values (base_url + api_key)."""
+    provider_id: str | None = Field(None, max_length=40)
+    base_url: str | None = Field(None, max_length=300)
+    api_key: str | None = Field(None, max_length=500)
+
+
+class DataSourceKeysUpdate(BaseModel):
+    """Each value: omit/null = keep, "" = remove (falls back to .env), text = save."""
+    values: dict[str, str | None]

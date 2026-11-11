@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     documents_dir: Path = PROJECT_ROOT / "data" / "documents"
     synthetic_dir: Path = PROJECT_ROOT / "data" / "synthetic"
     imports_dir: Path = PROJECT_ROOT / "data" / "imports"
+    # AI-model providers + data-source keys added on the Settings page (git-ignored, backend only)
+    provider_settings_path: Path = PROJECT_ROOT / "storage" / "provider_settings.json"
 
     # API / security
     cors_origins: str = "http://localhost:8501,http://127.0.0.1:8501"

@@ -27,9 +27,9 @@ def get(path: str, params: dict | None = None, timeout: float = 30) -> dict:
     return r.json()
 
 
-def post(path: str, payload: dict, headers: dict | None = None, timeout: float = 180) -> dict:
+def request(method: str, path: str, payload: dict | None = None, headers: dict | None = None, timeout: float = 180) -> dict:
     try:
-        r = requests.post(f"{BACKEND_URL}{path}", json=payload, headers=headers or {}, timeout=timeout)
+        r = requests.request(method, f"{BACKEND_URL}{path}", json=payload, headers=headers or {}, timeout=timeout)
     except requests.RequestException as e:
         raise BackendError(f"Cannot reach backend at {BACKEND_URL}. Is FastAPI running? ({e.__class__.__name__})") from e
     if not r.ok:
@@ -39,6 +39,10 @@ def post(path: str, payload: dict, headers: dict | None = None, timeout: float =
             detail = r.text[:300]
         raise BackendError(f"Backend error {r.status_code}: {detail}")
     return r.json()
+
+
+def post(path: str, payload: dict, headers: dict | None = None, timeout: float = 180) -> dict:
+    return request("POST", path, payload, headers, timeout)
 
 
 @st.cache_data(ttl=60, show_spinner=False)

@@ -28,7 +28,7 @@ with st.sidebar:
 
 
 def render_meta(meta: dict) -> None:
-    st.caption(f"Route: **{meta['route']}** · language: {meta['language']} · LLM used: {meta['used_llm']}")
+    st.caption(f"Route: **{meta['route']}** · language: {meta['language']} · LLM used: {meta.get('llm_provider_used') or 'no (retrieval-only)'}")
     if meta["sources"]:
         with st.expander(f"Sources and observation dates ({len(meta['sources'])})"):
             df = pd.DataFrame(meta["sources"])
