@@ -1,0 +1,24 @@
+quotation_id,buyer,product_name,grade,price,currency,unit,quantity_mt,delivery_terms,quoted_at,valid_until,data_label
+SYN-KQ-001,Demo Buyer C (Fictional Rice House),Super Basmati Rice,Kernel - Premium,296.0,PKR,PKR/kg,25,"Ex-mill, buyer transport",2026-11-01T12:00:00,2026-11-04,SYNTHETIC
+SYN-KQ-002,Demo Buyer D (Fictional Commodities),1121 Broken Rice (B1),B1 Broken,186.0,PKR,PKR/kg,200,Ex-warehouse Karachi,2026-11-01T17:00:00,2026-11-03,SYNTHETIC
+SYN-KQ-003,Demo Buyer A (Fictional Exports Ltd),1121 Basmati Sella Rice,Sella - Premium,312.0,PKR,PKR/kg,200,Delivered Karachi Port,2026-11-02T12:00:00,2026-11-04,SYNTHETIC
+SYN-KQ-004,Demo Buyer C (Fictional Rice House),IRRI-6 Broken Rice,100% Broken,104.0,PKR,PKR/kg,50,"Ex-mill, buyer transport",2026-11-02T15:00:00,2026-11-05,SYNTHETIC
+SYN-KQ-005,Demo Buyer C (Fictional Rice House),IRRI-6 White Rice,15% Broken,144.0,PKR,PKR/kg,50,Delivered Karachi Port,2026-11-02T12:00:00,2026-11-05,SYNTHETIC
+SYN-KQ-006,Demo Buyer B (Fictional Traders),1121 Basmati Sella Rice,Sella - Premium,315.0,PKR,PKR/kg,25,Ex-warehouse Karachi,2026-11-03T17:00:00,2026-11-06,SYNTHETIC
+SYN-KQ-007,Demo Buyer B (Fictional Traders),IRRI-6 Broken Rice,100% Broken,105.0,PKR,PKR/kg,100,Delivered Karachi Port,2026-11-03T15:00:00,2026-11-06,SYNTHETIC
+SYN-KQ-008,Demo Buyer A (Fictional Exports Ltd),IRRI-6 White Rice,15% Broken,143.0,PKR,PKR/kg,25,"Ex-mill, buyer transport",2026-11-03T15:00:00,2026-11-05,SYNTHETIC
+SYN-KQ-009,Demo Buyer C (Fictional Rice House),1121 Basmati Sella Rice,Sella - Premium,313.0,PKR,PKR/kg,200,Delivered Karachi Port,2026-11-04T15:00:00,2026-11-07,SYNTHETIC
+SYN-KQ-010,Demo Buyer A (Fictional Exports Ltd),IRRI-6 Broken Rice,100% Broken,105.0,PKR,PKR/kg,200,Delivered Karachi Port,2026-11-04T12:00:00,2026-11-07,SYNTHETIC
+SYN-KQ-011,Demo Buyer C (Fictional Rice House),IRRI-6 White Rice,15% Broken,146.0,PKR,PKR/kg,50,Delivered Karachi Port,2026-11-04T11:00:00,2026-11-09,SYNTHETIC
+SYN-KQ-012,Demo Buyer D (Fictional Commodities),1121 Basmati Sella Rice,Sella - Premium,317.0,PKR,PKR/kg,50,Delivered Karachi Port,2026-11-05T11:00:00,2026-11-07,SYNTHETIC
+SYN-KQ-013,Demo Buyer B (Fictional Traders),Super Basmati Rice,Kernel - Premium,293.0,PKR,PKR/kg,200,"Ex-mill, buyer transport",2026-11-05T12:00:00,2026-11-10,SYNTHETIC
+SYN-KQ-014,Demo Buyer A (Fictional Exports Ltd),1121 Broken Rice (B1),B1 Broken,187.0,PKR,PKR/kg,50,Ex-warehouse Karachi,2026-11-05T17:00:00,2026-11-07,SYNTHETIC
+SYN-KQ-015,Demo Buyer D (Fictional Commodities),IRRI-6 Broken Rice,100% Broken,104.0,PKR,PKR/kg,50,Delivered Karachi Port,2026-11-05T11:00:00,2026-11-08,SYNTHETIC
+SYN-KQ-016,Demo Buyer C (Fictional Rice House),1121 Broken Rice (B1),B1 Broken,190.0,PKR,PKR/kg,25,Ex-warehouse Karachi,2026-11-06T15:00:00,2026-11-11,SYNTHETIC
+SYN-KQ-017,Demo Buyer A (Fictional Exports Ltd),IRRI-6 Broken Rice,100% Broken,106.0,PKR,PKR/kg,50,"Ex-mill, buyer transport",2026-11-06T15:00:00,2026-11-09,SYNTHETIC
+SYN-KQ-018,Demo Buyer C (Fictional Rice House),IRRI-6 White Rice,15% Broken,145.0,PKR,PKR/kg,25,Delivered Karachi Port,2026-11-06T11:00:00,2026-11-09,SYNTHETIC
+SYN-KQ-019,Demo Buyer A (Fictional Exports Ltd),IRRI-6 Broken Rice,100% Broken,105.0,PKR,PKR/kg,100,Ex-warehouse Karachi,2026-11-07T17:00:00,2026-11-12,SYNTHETIC
+SYN-KQ-020,Demo Buyer C (Fictional Rice House),1121 Basmati Sella Rice,Sella - Premium,316.0,PKR,PKR/kg,100,"Ex-mill, buyer transport",2026-11-08T12:00:00,2026-11-11,SYNTHETIC
+SYN-KQ-021,Demo Buyer A (Fictional Exports Ltd),IRRI-6 Broken Rice,100% Broken,107.0,PKR,PKR/kg,100,"Ex-mill, buyer transport",2026-11-09T11:00:00,2026-11-14,SYNTHETIC
+SYN-KQ-022,Demo Buyer C (Fictional Rice House),1121 Basmati Sella Rice,Sella - Premium,319.0,PKR,PKR/kg,50,"Ex-mill, buyer transport",2026-11-10T17:00:00,2026-11-12,SYNTHETIC
+SYN-KQ-023,Demo Buyer D (Fictional Commodities),1121 Broken Rice (B1),B1 Broken,189.0,PKR,PKR/kg,100,Ex-warehouse Karachi,2026-11-10T17:00:00,2026-11-15,SYNTHETIC

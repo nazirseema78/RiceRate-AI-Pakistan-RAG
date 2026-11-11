@@ -1,0 +1,54 @@
+# --- secrets / environment ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- generated vector indexes / databases / runtime state ---
+chroma_db/
+vector_db/
+storage/*
+!storage/.gitkeep
+notebooks/notebook_chroma_db/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+*.lock
+*.log
+
+# --- private business data: authorised CSV imports stay local ---
+data/imports/*
+!data/imports/.gitkeep
+data/private/
+
+# --- model caches / temp ---
+.cache/
+huggingface/
+*.tmp
+*.temp
+~$*
+.DS_Store
+Thumbs.db
+.vscode/settings.json

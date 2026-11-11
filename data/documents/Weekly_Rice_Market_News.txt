@@ -1,0 +1,14 @@
+SYNTHETIC DEMONSTRATION DATA - FICTIONAL PRICES, NOT REAL MARKET QUOTATIONS
+
+WEEKLY RICE MARKET NEWS (FICTIONAL)
+Week ending: 2026-11-10
+
+- 2026-11-10 | Lower Punjab | Basmati paddy arrivals slow in Lower Punjab mandis (SYNTHETIC): Fictional report: arrivals of new-crop 1121 and Super Basmati paddy at Multan, Muzaffargarh and Bahawalpur grain markets were described as slower than the previous week because many growers held stocks expecting better rates. Brokers said this supported paddy prices over the last two weeks.
+- 2026-11-09 | Karachi | Karachi exporters book steady 1121 Sella volumes (SYNTHETIC): Fictional report: Karachi wholesale traders reported steady buying of 1121 Basmati Sella for Middle East destinations. Higher paddy costs in Punjab were cited as the main reason Karachi Sella quotations moved up.
+- 2026-11-08 | International | Thai and Vietnamese 5% broken quotes ease on ample supply (SYNTHETIC): Fictional commentary: export quotations for Thai and Vietnamese 5% broken white rice drifted lower over recent weeks as harvest supplies built up and buyer demand from Asian importers stayed cautious.
+- 2026-11-07 | International | India non-basmati export offers remain competitive (SYNTHETIC): Fictional report: Indian parboiled 5% export offers were reported slightly lower, keeping competition intense for Pakistani IRRI-6 exporters in African markets.
+- 2026-11-06 | Pakistan | Freight costs to Gulf stable this week (SYNTHETIC): Fictional report: container freight from Karachi to Gulf ports was described as broadly stable, giving no major new pressure on export parity prices this week.
+- 2026-11-05 | Lower Punjab | IRRI-6 paddy prices soften in Rahim Yar Khan (SYNTHETIC): Fictional report: IRRI-6 paddy demand from mills in Rahim Yar Khan and Bahawalpur was described as subdued, with millers citing weaker export enquiries for coarse rice.
+- 2026-11-04 | Karachi | Broken rice demand from feed and food processors steady (SYNTHETIC): Fictional report: demand for 1121 B1 broken and IRRI-6 100% broken rice in Karachi remained steady; traders reported no major change in quoted rates.
+
+SYNTHETIC DEMONSTRATION DATA - FICTIONAL PRICES, NOT REAL MARKET QUOTATIONS
