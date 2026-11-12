@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from backend.config import get_settings
 from backend.database.db import get_conn
 from backend.schemas.api import (BriefingResponse, ChatRequest, ChatResponse, CompareModelsRequest, CompareResponse,
-                                 DataSourceKeysUpdate,
+                                 AccuracyUpdate, DataSourceKeysUpdate, ProviderKeyUpdate,
                                  GenericListResponse, HealthResponse, LLMProviderCreate, LLMProviderUpdate, ModelListRequest,
                                  PriceListResponse, RefreshRequest, RefreshResponse)
 from backend.services import provider_settings as ps
@@ -182,8 +182,7 @@ def admin_refresh(req: RefreshRequest | None = None):
 def llm_status():
     """Public, key-free view of which AI models the chatbot will try, in order."""
     chain = ps.active_llm_chain()
-    return {"enabled": bool(chain), "summary": llm.chain_summary(),
-            "providers": [{"name": p["name"], "tier": p["tier"], "model": p["model"], "priority": p.get("priority")} for p in chain]}
+    return {"enabled": bool(chain), "summary": llm.chain_summary(), "fallback_plan": llm.chain_status()}
 
 
 # ------------------------------------------------------------------ admin: AI model providers + data-source keys
@@ -196,14 +195,16 @@ def admin_settings():
     env = ps.env_llm_provider()
     return {"llm_providers": ps.list_llm_providers(), "presets": ps.PRESETS,
             "env_llm_provider": ps.public_provider(env) if env else None,
-            "active_chain": llm.chain_summary(), "data_source_keys": ps.data_source_keys_status(),
+            "active_chain": llm.chain_summary(), "fallback_plan": llm.chain_status(),
+            "recommended_plan": [{"preset": a, "model": b, "priority": c, "name": d} for a, b, c, d in ps.RECOMMENDED_PLAN],
+            "accuracy": ps.accuracy_status(), "data_source_keys": ps.data_source_keys_status(),
             "storage": "storage/provider_settings.json on the backend (git-ignored). Keys are never sent back to the browser."}
 
 
 @router.post("/admin/llm/providers", dependencies=[Depends(require_admin)])
 def admin_add_llm_provider(req: LLMProviderCreate):
     try:
-        return ps.add_llm_provider(req.model_dump())
+        return ps.add_llm_provider(req.model_dump(exclude_unset=True))
     except ps.SettingsError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -289,3 +290,38 @@ def admin_compare_models(req: CompareModelsRequest):
                             "note": f"error: {e.__class__.__name__}", "warnings": [], "route": "", "sources": 0,
                             "seconds": round(time.monotonic() - started, 1)})
     return {"question": req.question, "results": results}
+
+
+@router.post("/admin/llm/recommended-plan", dependencies=[Depends(require_admin)])
+def admin_install_recommended_plan():
+    """Add the recommended free -> local -> paid fallback list (all switched off until their key is added)."""
+    return ps.install_recommended_plan()
+
+
+@router.put("/admin/llm/provider-key", dependencies=[Depends(require_admin)])
+def admin_set_provider_key(req: ProviderKeyUpdate):
+    try:
+        ids = ps.set_key_for_preset(req.preset, req.api_key, req.enable)
+    except ps.SettingsError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    llm.reset_cooldowns()
+    return {"updated": len(ids), "providers": ps.list_llm_providers()}
+
+
+@router.post("/admin/llm/reset-cooldowns", dependencies=[Depends(require_admin)])
+def admin_reset_cooldowns():
+    llm.reset_cooldowns()
+    return {"fallback_plan": llm.chain_status()}
+
+
+@router.get("/admin/accuracy", dependencies=[Depends(require_admin)])
+def admin_get_accuracy():
+    return {"accuracy": ps.accuracy_status()}
+
+
+@router.put("/admin/accuracy", dependencies=[Depends(require_admin)])
+def admin_set_accuracy(req: AccuracyUpdate):
+    try:
+        return {"accuracy": ps.set_accuracy(req.values)}
+    except ps.SettingsError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e

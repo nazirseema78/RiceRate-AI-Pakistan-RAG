@@ -129,6 +129,9 @@ class LLMProviderCreate(BaseModel):
     enabled: bool = True
     priority: int = Field(10, ge=0, le=999)
     notes: str | None = Field(None, max_length=500)
+    temperature: float | None = Field(None, ge=0, le=2, description="empty = do not send (needed for Claude 5 / newer OpenAI models)")
+    max_tokens: int | None = Field(None, ge=16, le=16000)
+    token_param: str | None = Field(None, pattern="^(max_tokens|max_completion_tokens)$")
 
 
 class LLMProviderUpdate(BaseModel):
@@ -141,6 +144,9 @@ class LLMProviderUpdate(BaseModel):
     enabled: bool | None = None
     priority: int | None = Field(None, ge=0, le=999)
     notes: str | None = Field(None, max_length=500)
+    temperature: float | None = Field(None, ge=0, le=2, description="empty = do not send (needed for Claude 5 / newer OpenAI models)")
+    max_tokens: int | None = Field(None, ge=16, le=16000)
+    token_param: str | None = Field(None, pattern="^(max_tokens|max_completion_tokens)$")
 
 
 class ModelListRequest(BaseModel):
@@ -159,3 +165,15 @@ class CompareModelsRequest(BaseModel):
 class DataSourceKeysUpdate(BaseModel):
     """Each value: omit/null = keep, "" = remove (falls back to .env), text = save."""
     values: dict[str, str | None]
+
+
+class ProviderKeyUpdate(BaseModel):
+    """One API key for every saved model of a provider (e.g. one Groq key for both Groq models)."""
+    preset: str = Field(..., max_length=40)
+    api_key: str = Field("", max_length=500)
+    enable: bool = True
+
+
+class AccuracyUpdate(BaseModel):
+    """name -> value; null resets that setting to its default."""
+    values: dict[str, float | int | None]

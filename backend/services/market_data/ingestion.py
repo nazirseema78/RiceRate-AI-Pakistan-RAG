@@ -12,6 +12,7 @@ from backend.services.market_data.base import MarketDataProvider, ProviderError
 from backend.services.market_data.registry import all_known_providers, enabled_providers
 from backend.services.market_data.units import UnitError, normalize_price
 from backend.services.market_data.validation import to_pkt, validate_observation
+from backend.services.provider_settings import accuracy_value
 
 log = logging.getLogger(__name__)
 PKT = ZoneInfo("Asia/Karachi")
@@ -66,6 +67,11 @@ def store_observations(conn, source_id: int, observations: list[PriceObservation
                             {"name": o.product_name, "product_type": o.product_type.value, "variety": o.variety, "grade": o.grade})
         mid = get_or_create(conn, "markets", {"name": o.market, "city": o.city, "country": o.country},
                             {"province": o.province, "region": region_for(o.city, o.country)})
+        jump = _suspicious_jump(conn, pid, mid, source_id, o.price_category.value, observed_iso, v.normalized_price)
+        if jump:
+            stats["rejected"] += 1
+            stats["reasons"][jump] = stats["reasons"].get(jump, 0) + 1
+            continue
         cur = conn.execute(
             """INSERT OR IGNORE INTO market_prices (product_id, market_id, source_id, price, currency, original_unit,
                    normalized_price, normalized_unit, price_category, observed_at, retrieved_at, source_name, source_url,
@@ -89,6 +95,21 @@ def store_observations(conn, source_id: int, observations: list[PriceObservation
         latest_obs = max(latest_obs or observed_iso, observed_iso)
     stats["latest_observation"] = latest_obs
     return stats
+
+
+def _suspicious_jump(conn, pid: int, mid: int, sid: int, category: str, observed_iso: str, price: float) -> str:
+    """Spike filter (Settings -> Pricing accuracy -> max_jump_pct). Compares with the previous stored price of the same
+    product, market, category and source. Returns a rejection reason, or "" if the price is plausible."""
+    limit = accuracy_value("max_jump_pct")
+    if not limit:
+        return ""
+    prev = conn.execute("""SELECT normalized_price FROM market_prices WHERE product_id=? AND market_id=? AND source_id=?
+                           AND price_category=? AND observed_at < ? ORDER BY observed_at DESC LIMIT 1""",
+                        (pid, mid, sid, category, observed_iso)).fetchone()
+    if not prev or not prev["normalized_price"]:
+        return ""
+    change = abs(price - prev["normalized_price"]) / prev["normalized_price"] * 100
+    return f"suspicious jump > {limit:g}% vs previous price (needs manual check)" if change > limit else ""
 
 
 def store_quotations(conn, quotations: list[dict]) -> int:

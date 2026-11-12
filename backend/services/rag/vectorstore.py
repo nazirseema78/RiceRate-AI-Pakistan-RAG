@@ -147,10 +147,16 @@ def ensure_index() -> None:
 
 
 def retrieve(query: str, k: int | None = None, filter_meta: dict | None = None) -> list[dict]:
-    k = k or get_settings().retrieval_k
+    from backend.services.provider_settings import get_accuracy
+
+    acc = get_accuracy()
+    k = k or acc["retrieval_k"]
     store = get_store()
     results = store.similarity_search_with_score(expand_query(query), k=k, filter=filter_meta)
     out = []
     for doc, distance in results:
-        out.append({"text": doc.page_content, "score": round(1.0 - float(distance), 4), **doc.metadata})
+        score = round(1.0 - float(distance), 4)
+        if score < acc["min_retrieval_score"]:
+            continue  # too dissimilar: off-topic text makes answers less accurate
+        out.append({"text": doc.page_content, "score": score, **doc.metadata})
     return out

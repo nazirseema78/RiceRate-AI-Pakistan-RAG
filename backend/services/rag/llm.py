@@ -12,6 +12,7 @@ Whatever the provider, the chatbot discards a generated answer that contains a n
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 import requests
@@ -38,6 +39,33 @@ class LLMError(RuntimeError):
     pass
 
 
+# Fallback plan, step 2: a model that just failed (rate limit, outage, timeout) is skipped for a while so the next
+# questions go straight to the next model instead of waiting for the same failure again.
+_cooldown: dict[str, tuple[float, str]] = {}
+_cool_lock = threading.Lock()
+
+
+def _cool_down(provider: dict, reason: str) -> None:
+    secs = ps.accuracy_value("failure_cooldown_seconds")
+    if secs and provider.get("id"):
+        with _cool_lock:
+            _cooldown[provider["id"]] = (time.monotonic() + secs, reason[:200])
+
+
+def cooling_down(provider: dict) -> str | None:
+    with _cool_lock:
+        until, reason = _cooldown.get(provider.get("id", ""), (0.0, ""))
+        if until > time.monotonic():
+            return f"skipped for {int(until - time.monotonic())} s after: {reason}"
+        _cooldown.pop(provider.get("id", ""), None)
+        return None
+
+
+def reset_cooldowns() -> None:
+    with _cool_lock:
+        _cooldown.clear()
+
+
 def _headers(provider: dict) -> dict:
     h = {"Content-Type": "application/json"}
     if provider.get("api_key"):
@@ -50,18 +78,22 @@ def _redact(text: str, provider: dict) -> str:
     return text.replace(key, "****") if key else text
 
 
-def chat_completion(provider: dict, messages: list[dict], max_tokens: int = 700, timeout: float | None = None) -> str:
+def chat_completion(provider: dict, messages: list[dict], max_tokens: int | None = None, timeout: float | None = None) -> str:
     """One call to one provider. Raises LLMError with a key-free message on any failure."""
-    timeout = timeout or get_settings().llm_timeout_seconds
+    timeout = timeout or ps.accuracy_value("llm_timeout_seconds")
+    body = {"model": provider["model"], "messages": messages,
+            provider.get("token_param") or "max_tokens": int(max_tokens or provider.get("max_tokens") or 900)}
+    if provider.get("temperature") is not None:  # omitted for models that only accept their default
+        body["temperature"] = provider["temperature"]
     try:
         r = requests.post(f"{provider['base_url'].rstrip('/')}/chat/completions", headers=_headers(provider), timeout=timeout,
-                          json={"model": provider["model"], "messages": messages, "temperature": 0.1, "max_tokens": max_tokens})
+                          json=body)
     except requests.RequestException as e:
         raise LLMError(f"connection failed: {e.__class__.__name__}") from e
     if not r.ok:
         raise LLMError(_redact(f"HTTP {r.status_code}: {r.text[:300]}", provider))
     try:
-        return r.json()["choices"][0]["message"]["content"].strip()
+        return (r.json()["choices"][0]["message"]["content"] or "").strip()
     except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         raise LLMError("unexpected response format (not an OpenAI-compatible chat response)") from e
 
@@ -85,10 +117,31 @@ def list_models(provider: dict, timeout: float = 20) -> list[str]:
 def test_provider(provider: dict) -> dict:
     started = time.monotonic()
     try:
-        reply = chat_completion(provider, [{"role": "user", "content": "Reply with the single word: OK"}], max_tokens=5, timeout=30)
+        reply = chat_completion(provider, [{"role": "user", "content": "Reply with the single word: OK"}], timeout=60)
         return {"ok": True, "latency_ms": int((time.monotonic() - started) * 1000), "message": f"Connected. Reply: {reply[:40]!r}"}
     except LLMError as e:
         return {"ok": False, "latency_ms": int((time.monotonic() - started) * 1000), "message": str(e)}
+
+
+def chain_status() -> list[dict]:
+    """The complete fallback plan in order, with each model's state (no keys)."""
+    items = ps.list_llm_providers(include_secrets=True)
+    env = ps.env_llm_provider()
+    if env:
+        items.append(env)
+    out = []
+    for i, p in enumerate(items, 1):
+        if not p.get("enabled"):
+            state = "off" + (" (no API key yet)" if ps.needs_key(p) and not p.get("api_key") else "")
+        elif ps.needs_key(p) and not p.get("api_key"):
+            state = "on, but missing API key (skipped)"
+        else:
+            state = cooling_down(p) or "ready"
+        out.append({"step": i, "name": p["name"], "tier": p["tier"], "model": p["model"], "priority": p.get("priority"),
+                    "state": state})
+    out.append({"step": len(out) + 1, "name": "Retrieval-only answer (no AI model)", "tier": "free", "model": "-",
+                "priority": None, "state": "always available (final fallback)"})
+    return out
 
 
 def llm_enabled() -> bool:
@@ -117,9 +170,15 @@ def generate(question: str, facts_text: str, context_text: str, language: str,
             msgs.append({"role": h["role"], "content": h["content"][:1500]})
     msgs.append({"role": "user", "content": f"QUESTION:\n{question}\n\nPRICE_FACTS:\n{facts_text or '(none)'}\n\n"
                                             f"DOCUMENT_CONTEXT:\n{context_text or '(none)'}"})
+    forced = providers is not None  # comparison tool: always call the chosen model
     for provider in chain:
+        if ps.needs_key(provider) and not provider.get("api_key"):
+            continue
+        if not forced and cooling_down(provider):
+            continue
         try:
             return chat_completion(provider, msgs), f"{provider['name']} ({provider['model']})"
         except LLMError as e:
             log.warning("LLM provider %s failed, trying next: %s", provider["name"], e)
+            _cool_down(provider, str(e))
     return None, None

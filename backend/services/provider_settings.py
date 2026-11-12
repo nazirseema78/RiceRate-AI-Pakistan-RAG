@@ -9,6 +9,7 @@ and if none works the chatbot falls back to its retrieval-only answer.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -25,34 +26,89 @@ _lock = threading.RLock()
 
 # ---------------------------------------------------------------------------------------------------------------
 # Catalogue of ready-made templates. Every entry speaks the OpenAI-compatible chat API (POST {base_url}/chat/completions).
-# `model_hint` is only a starting suggestion: model names change often, so use "List models" in the Settings page
-# (GET {base_url}/models) to pick one the provider currently offers, and "Test" to verify the connection.
+# Base URLs and model ids were checked on 2026-11-12 against each provider's own documentation or live /models list:
+#   Groq docs (console.groq.com/docs/models), Google AI Studio docs (OpenAI compatibility + pricing pages),
+#   OpenRouter GET /api/v1/models, Anthropic OpenAI-SDK compatibility page, OpenAI models page.
+# Model names change often: use "List models" on the Settings page to see what a provider offers today, and "Test".
 # Free-tier limits and terms are set by each provider and can change - check them before relying on a service.
+#
+# temperature: None = do not send it (Claude 5 and OpenAI's newer models reject custom values).
+# token_param: the request field for the answer length limit (OpenAI's newer models need max_completion_tokens).
 # ---------------------------------------------------------------------------------------------------------------
 PRESETS: list[dict] = [
-    {"preset": "ollama", "name": "Ollama (local, on this PC)", "tier": "free", "base_url": "http://localhost:11434/v1",
-     "model_hint": "llama3.2", "needs_key": False, "signup_url": "https://ollama.com/download",
-     "notes": "Runs on your own computer, no key, no cost. Install Ollama, then run: ollama pull llama3.2"},
     {"preset": "groq", "name": "Groq", "tier": "free", "base_url": "https://api.groq.com/openai/v1",
-     "model_hint": "llama-3.1-8b-instant", "needs_key": True, "signup_url": "https://console.groq.com/keys",
-     "notes": "Hosted, free tier with rate limits set by Groq."},
-    {"preset": "openrouter_free", "name": "OpenRouter (free models)", "tier": "free", "base_url": "https://openrouter.ai/api/v1",
-     "model_hint": "choose a model ending in :free", "needs_key": True, "signup_url": "https://openrouter.ai/keys",
-     "notes": "Gateway to many models. Model ids ending in ':free' cost nothing (rate-limited); others are paid."},
+     "model_hint": "llama-3.3-70b-versatile", "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant",
+                                                         "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+     "needs_key": True, "signup_url": "https://console.groq.com/keys", "temperature": 0.1, "max_tokens": 900,
+     "token_param": "max_tokens", "notes": "Hosted, very fast, free tier with rate limits set by Groq."},
     {"preset": "gemini", "name": "Google Gemini (AI Studio)", "tier": "free",
-     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model_hint": "use List models",
-     "needs_key": True, "signup_url": "https://aistudio.google.com/apikey",
-     "notes": "OpenAI-compatible endpoint with a free tier; Google's terms for the free tier apply."},
-    {"preset": "openai", "name": "OpenAI", "tier": "paid", "base_url": "https://api.openai.com/v1",
-     "model_hint": "use List models", "needs_key": True, "signup_url": "https://platform.openai.com/api-keys",
-     "notes": "Paid, billed per token by OpenAI."},
+     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model_hint": "gemini-3.8-flash",
+     "models": ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"],
+     "needs_key": True, "signup_url": "https://aistudio.google.com/apikey", "temperature": 0.1, "max_tokens": 900,
+     "token_param": "max_tokens", "notes": "Free tier listed by Google for these Flash models; Google's free-tier terms apply "
+                                           "(check whether free-tier prompts may be used to improve Google products)."},
+    {"preset": "openrouter_free", "name": "OpenRouter (free models)", "tier": "free", "base_url": "https://openrouter.ai/api/v1",
+     "model_hint": "google/gemma-4-31b-it:free", "models": ["google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free",
+                                                            "nvidia/nemotron-3.5-super-vl:free", "openrouter/free"],
+     "needs_key": True, "signup_url": "https://openrouter.ai/keys", "temperature": 0.1, "max_tokens": 900,
+     "token_param": "max_tokens", "notes": "Model ids ending in ':free' cost nothing (rate-limited); 'openrouter/free' picks any "
+                                           "free model. Other OpenRouter models are paid."},
+    {"preset": "ollama", "name": "Ollama (local, on this PC)", "tier": "free", "base_url": "http://localhost:11434/v1",
+     "model_hint": "llama3.2", "models": ["llama3.2"], "needs_key": False, "signup_url": "https://ollama.com/download",
+     "temperature": 0.1, "max_tokens": 900, "token_param": "max_tokens",
+     "notes": "Runs on your own computer: no key, no cost, works offline. Install Ollama, then run: ollama pull llama3.2"},
     {"preset": "anthropic", "name": "Anthropic Claude", "tier": "paid", "base_url": "https://api.anthropic.com/v1",
-     "model_hint": "use List models", "needs_key": True, "signup_url": "https://console.anthropic.com/settings/keys",
-     "notes": "Paid, billed per token. Uses Anthropic's OpenAI-SDK compatibility endpoint."},
+     "model_hint": "claude-haiku-5-5", "models": ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
+     "needs_key": True, "signup_url": "https://platform.claude.com/settings/keys", "temperature": None, "max_tokens": 2500,
+     "token_param": "max_tokens", "notes": "Paid, billed per token. Uses Anthropic's OpenAI-SDK compatibility endpoint. "
+                                           "Claude 5 models think by default, so the length limit is higher."},
+    {"preset": "openai", "name": "OpenAI", "tier": "paid", "base_url": "https://api.openai.com/v1",
+     "model_hint": "gpt-6-luna", "models": ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"], "needs_key": True,
+     "signup_url": "https://platform.openai.com/api-keys", "temperature": None, "max_tokens": 2500,
+     "token_param": "max_completion_tokens", "notes": "Paid, billed per token by OpenAI. gpt-6-luna is the lowest-priced model."},
     {"preset": "custom", "name": "Custom OpenAI-compatible endpoint", "tier": "free", "base_url": "",
-     "model_hint": "", "needs_key": False, "signup_url": "",
+     "model_hint": "", "models": [], "needs_key": False, "signup_url": "", "temperature": 0.1, "max_tokens": 900,
+     "token_param": "max_tokens",
      "notes": "Any other server that implements /v1/chat/completions (LM Studio, vLLM, a company gateway...)."},
 ]
+PRESET_BY_KEY = {p["preset"]: p for p in PRESETS}
+
+# Recommended fallback plan: the strongest free hosted model first, a second free provider next, then more free
+# models, then the local model (works without internet), and paid models LAST and switched off until you choose.
+# After every model, the chatbot's final fallback is always the retrieval-only answer (no AI model needed).
+RECOMMENDED_PLAN: list[tuple[str, str, int, str]] = [
+    ("groq", "llama-3.3-70b-versatile", 10, "Groq Llama 3.3 70B"),
+    ("gemini", "gemini-3.8-flash", 20, "Gemini 3.8 Flash"),
+    ("groq", "llama-3.1-8b-instant", 30, "Groq Llama 3.1 8B (fast backup)"),
+    ("openrouter_free", "google/gemma-4-31b-it:free", 40, "OpenRouter Gemma 4 31B (free)"),
+    ("openrouter_free", "openrouter/free", 50, "OpenRouter auto free model"),
+    ("ollama", "llama3.2", 60, "Ollama Llama 3.2 (local, offline)"),
+    ("anthropic", "claude-haiku-5-5", 90, "Claude Haiku 5.5 (paid backup)"),
+    ("openai", "gpt-6-luna", 95, "OpenAI GPT-6 Luna (paid backup)"),
+]
+
+# Pricing-accuracy settings (Settings page -> Pricing accuracy). Defaults reproduce the original behaviour.
+ACCURACY_FIELDS: dict[str, dict] = {
+    "min_price_pkr_per_kg": {"default": 10.0, "min": 0.0, "max": 1000.0,
+                             "help": "Reject PKR prices below this (per kg, after unit conversion)."},
+    "max_price_pkr_per_kg": {"default": 3000.0, "min": 50.0, "max": 20000.0, "help": "Reject PKR prices above this (per kg)."},
+    "min_price_usd_per_mt": {"default": 100.0, "min": 0.0, "max": 2000.0, "help": "Reject export/benchmark prices below this (USD/MT)."},
+    "max_price_usd_per_mt": {"default": 5000.0, "min": 200.0, "max": 20000.0, "help": "Reject export/benchmark prices above this (USD/MT)."},
+    "max_jump_pct": {"default": 0.0, "min": 0.0, "max": 500.0,
+                     "help": "Spike filter: reject a new price that differs from the previous price of the SAME product, market, "
+                             "category and source by more than this %. 0 = off. 25 is a sensible value for daily data."},
+    "trend_threshold_pct": {"default": 1.5, "min": 0.1, "max": 20.0, "help": "Change needed to call a market Rising / Falling."},
+    "stale_after_days_daily": {"default": 2, "min": 0, "max": 60, "help": "Daily prices older than this many days are marked stale."},
+    "stale_after_days_periodic": {"default": 45, "min": 1, "max": 400,
+                                  "help": "Monthly / periodic benchmarks older than this many days are marked stale."},
+    "retrieval_k": {"default": 5, "min": 1, "max": 20, "help": "Document chunks given to the chatbot per question."},
+    "min_retrieval_score": {"default": 0.0, "min": 0.0, "max": 0.95,
+                            "help": "Ignore document chunks less similar than this (0-1). 0 = keep all. Try 0.25 to cut off-topic text."},
+    "llm_timeout_seconds": {"default": 60.0, "min": 5.0, "max": 300.0,
+                            "help": "How long to wait for one AI model before trying the next one."},
+    "failure_cooldown_seconds": {"default": 120, "min": 0, "max": 3600,
+                                 "help": "After a model fails (rate limit, outage), skip it for this many seconds and go straight to the next."},
+}
 
 # data-source secrets that can be managed from the Settings page (name -> description)
 DATA_SOURCE_KEYS: dict[str, str] = {
@@ -81,21 +137,36 @@ def _path() -> Path:
 
 
 def _empty() -> dict:
-    return {"version": 1, "llm_providers": [], "data_source_keys": {}}
+    return {"version": 1, "llm_providers": [], "data_source_keys": {}, "accuracy": {}}
 
 
-def load() -> dict:
-    with _lock:
-        p = _path()
-        if not p.exists():
-            return _empty()
+_cache: dict = {"key": None, "data": None}
+
+
+def _read() -> dict:
+    """Parsed file, cached until the file changes (the prices code reads settings for every row)."""
+    p = _path()
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return _empty()
+    if _cache["key"] != key:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return _empty()
+            data = _empty()
         data.setdefault("llm_providers", [])
         data.setdefault("data_source_keys", {})
-        return data
+        data.setdefault("accuracy", {})
+        _cache.update(key=key, data=data)
+    return _cache["data"]
+
+
+def load() -> dict:
+    """A private copy of the settings, safe to modify and pass to save()."""
+    with _lock:
+        return copy.deepcopy(_read())
 
 
 def save(data: dict) -> None:
@@ -105,6 +176,7 @@ def save(data: dict) -> None:
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, p)  # atomic: a crash never leaves a half-written file
+        _cache["key"] = None
 
 
 # ------------------------------------------------------------------ LLM providers
@@ -121,6 +193,20 @@ def _validate(p: dict) -> None:
         raise SettingsError("model is required (use 'List models' to see what the provider offers)")
     if p.get("tier") not in ("free", "paid"):
         raise SettingsError("tier must be 'free' or 'paid'")
+    if p.get("token_param", "max_tokens") not in ("max_tokens", "max_completion_tokens"):
+        raise SettingsError("token_param must be max_tokens or max_completion_tokens")
+    t = p.get("temperature")
+    if t is not None and not 0 <= float(t) <= 2:
+        raise SettingsError("temperature must be between 0 and 2, or empty")
+
+
+def _tuning(values: dict) -> dict:
+    """Per-provider request options, defaulting to the preset's values."""
+    pre = PRESET_BY_KEY.get(values.get("preset") or "custom", PRESET_BY_KEY["custom"])
+    temp = values["temperature"] if "temperature" in values else pre["temperature"]
+    return {"temperature": None if temp is None else float(temp),
+            "max_tokens": int(values.get("max_tokens") or pre["max_tokens"]),
+            "token_param": values.get("token_param") or pre["token_param"]}
 
 
 def public_provider(p: dict) -> dict:
@@ -151,6 +237,7 @@ def add_llm_provider(values: dict) -> dict:
              "model": values.get("model", "").strip(), "api_key": (values.get("api_key") or "").strip(),
              "enabled": bool(values.get("enabled", True)), "priority": int(values.get("priority", 10)),
              "notes": (values.get("notes") or "")[:500], "created_at": now_iso(), "updated_at": now_iso(),
+             **_tuning(values),
              "last_test_at": None, "last_test_ok": None, "last_test_message": ""}
         _validate(p)
         data["llm_providers"].append(p)
@@ -173,6 +260,12 @@ def update_llm_provider(pid: str, values: dict) -> dict:
                 p["enabled"] = bool(values["enabled"])
             if values.get("priority") is not None:
                 p["priority"] = int(values["priority"])
+            if "temperature" in values:
+                p["temperature"] = None if values["temperature"] is None else float(values["temperature"])
+            if values.get("max_tokens") is not None:
+                p["max_tokens"] = int(values["max_tokens"])
+            if values.get("token_param") is not None:
+                p["token_param"] = values["token_param"]
             if values.get("api_key") is not None:
                 p["api_key"] = values["api_key"].strip()
             for field in ("last_test_at", "last_test_ok", "last_test_message"):
@@ -201,7 +294,8 @@ def env_llm_provider() -> dict | None:
     if s.llm_provider != "openai_compatible":
         return None
     return {"id": "env", "name": "From .env (LLM_BASE_URL)", "preset": "custom", "tier": "free", "base_url": s.llm_base_url,
-            "model": s.llm_model, "api_key": s.llm_api_key, "enabled": True, "priority": 1000, "notes": "configured in .env"}
+            "model": s.llm_model, "api_key": s.llm_api_key, "enabled": True, "priority": 1000, "notes": "configured in .env",
+            "temperature": 0.1, "max_tokens": 900, "token_param": "max_tokens"}
 
 
 def active_llm_chain() -> list[dict]:
@@ -252,3 +346,96 @@ def set_data_source_keys(values: dict[str, str | None]) -> list[dict]:
                 data["data_source_keys"].pop(name, None)
         save(data)
     return data_source_keys_status()
+
+
+# ------------------------------------------------------------------ recommended fallback plan
+def install_recommended_plan() -> dict:
+    """Add the recommended providers that are not saved yet. All start DISABLED; each one is switched on when you add
+    its key (Ollama: once installed). Existing entries are never changed."""
+    with _lock:
+        data = load()
+        have = {(p.get("preset"), p.get("model")) for p in data["llm_providers"]}
+        added = []
+        for preset, model, priority, name in RECOMMENDED_PLAN:
+            if (preset, model) in have:
+                continue
+            pre = PRESET_BY_KEY[preset]
+            p = {"id": uuid.uuid4().hex[:12], "name": name, "preset": preset, "tier": pre["tier"], "base_url": pre["base_url"],
+                 "model": model, "api_key": "", "enabled": False, "priority": priority, "notes": pre["notes"][:500],
+                 "created_at": now_iso(), "updated_at": now_iso(), "last_test_at": None, "last_test_ok": None,
+                 "last_test_message": "", **_tuning({"preset": preset})}
+            data["llm_providers"].append(p)
+            added.append(name)
+        save(data)
+    return {"added": added, "providers": list_llm_providers()}
+
+
+def set_key_for_preset(preset: str, api_key: str, enable: bool = True) -> list[str]:
+    """One key per provider account: save it on every saved model of that provider and switch them on."""
+    if preset not in PRESET_BY_KEY or preset == "custom":
+        raise SettingsError(f"unknown provider: {preset}")
+    with _lock:
+        data = load()
+        changed = []
+        for p in data["llm_providers"]:
+            if p.get("preset") == preset:
+                p["api_key"] = api_key.strip()
+                if enable and (api_key.strip() or not PRESET_BY_KEY[preset]["needs_key"]):
+                    p["enabled"] = True
+                if not api_key.strip() and PRESET_BY_KEY[preset]["needs_key"]:
+                    p["enabled"] = False
+                p["updated_at"] = now_iso()
+                changed.append(p["id"])
+        if not changed:
+            raise SettingsError("no saved model uses this provider - load the recommended plan or add one first")
+        save(data)
+    return changed
+
+
+# ------------------------------------------------------------------ pricing-accuracy settings
+def get_accuracy() -> dict:
+    stored = _read().get("accuracy", {})
+    return {name: type(f["default"])(stored.get(name, f["default"])) for name, f in ACCURACY_FIELDS.items()}
+
+
+def accuracy_value(name: str):
+    return get_accuracy()[name]
+
+
+def accuracy_status() -> list[dict]:
+    cur = get_accuracy()
+    return [{"name": n, "value": cur[n], "default": f["default"], "min": f["min"], "max": f["max"], "help": f["help"],
+             "changed": cur[n] != f["default"]} for n, f in ACCURACY_FIELDS.items()]
+
+
+def set_accuracy(values: dict) -> list[dict]:
+    """``None`` = reset that setting to its default."""
+    with _lock:
+        data = load()
+        acc = data.setdefault("accuracy", {})
+        for name, v in values.items():
+            f = ACCURACY_FIELDS.get(name)
+            if not f:
+                raise SettingsError(f"unknown accuracy setting: {name}")
+            if v is None:
+                acc.pop(name, None)
+                continue
+            try:
+                v = type(f["default"])(v)
+            except (TypeError, ValueError) as e:
+                raise SettingsError(f"{name}: not a number") from e
+            if not f["min"] <= v <= f["max"]:
+                raise SettingsError(f"{name} must be between {f['min']} and {f['max']}")
+            acc[name] = v
+        merged = {**{n: f["default"] for n, f in ACCURACY_FIELDS.items()}, **acc}
+        if merged["min_price_pkr_per_kg"] >= merged["max_price_pkr_per_kg"]:
+            raise SettingsError("min_price_pkr_per_kg must be below max_price_pkr_per_kg")
+        if merged["min_price_usd_per_mt"] >= merged["max_price_usd_per_mt"]:
+            raise SettingsError("min_price_usd_per_mt must be below max_price_usd_per_mt")
+        save(data)
+    return accuracy_status()
+
+
+def needs_key(p: dict) -> bool:
+    """True if this provider's template requires an API key (a model without one is skipped in the fallback plan)."""
+    return PRESET_BY_KEY.get(p.get("preset") or "custom", PRESET_BY_KEY["custom"])["needs_key"]

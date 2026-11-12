@@ -171,3 +171,104 @@ def test_compare_models(client, monkeypatch):
     assert res["Good"]["used_llm"] is True and res["Good"]["answer"].startswith("Model answer")  # disabled models can be compared
     assert res["Bad"]["used_llm"] is False and "failed" in res["Bad"]["note"]
     assert client.post("/api/admin/llm/compare", json={"question": "x y"}).status_code == 401
+
+
+# ------------------------------------------------------------------ recommended fallback plan
+def test_recommended_plan_free_first_paid_last_all_off(client):
+    r = client.post("/api/admin/llm/recommended-plan", headers=ADMIN).json()
+    provs = r["providers"]
+    assert len(provs) == len(ps.RECOMMENDED_PLAN) and all(not p["enabled"] for p in provs)
+    tiers = [p["tier"] for p in provs]  # sorted by priority
+    assert tiers.index("paid") > max(i for i, t in enumerate(tiers) if t == "free")
+    again = client.post("/api/admin/llm/recommended-plan", headers=ADMIN).json()
+    assert again["added"] == []  # never duplicates
+
+
+def test_one_key_enables_all_models_of_that_provider(client):
+    client.post("/api/admin/llm/recommended-plan", headers=ADMIN)
+    r = client.put("/api/admin/llm/provider-key", headers=ADMIN, json={"preset": "groq", "api_key": SECRET})
+    assert r.status_code == 200 and r.json()["updated"] == 2 and SECRET not in r.text
+    names = [p["name"] for p in ps.active_llm_chain()]
+    assert names == ["Groq Llama 3.3 70B", "Groq Llama 3.1 8B (fast backup)"]
+    status = client.get("/api/llm/status").json()["fallback_plan"]
+    assert status[-1]["name"].startswith("Retrieval-only")
+
+
+def test_cooldown_skips_failed_model(client, monkeypatch):
+    llm.reset_cooldowns()
+    _add(client, name="Flaky", base_url="https://flaky.example/v1", priority=1)
+    _add(client, name="Steady", base_url="https://steady.example/v1", priority=2)
+    calls = []
+
+    def fake_post(url, **kw):
+        calls.append(url)
+        if "flaky" in url:
+            return FakeResp(429, text="rate limited")
+        return FakeResp(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+    assert llm.generate("q", "f", "c", "en")[1].startswith("Steady")
+    calls.clear()
+    assert llm.generate("q", "f", "c", "en")[1].startswith("Steady")
+    assert not any("flaky" in c for c in calls)  # skipped during cooldown
+    llm.reset_cooldowns()
+
+
+def test_request_options_follow_the_preset(client, monkeypatch):
+    sent = {}
+    monkeypatch.setattr(llm.requests, "post",
+                        lambda url, json=None, **kw: sent.setdefault(url, json) and FakeResp(200, {"choices": [{"message": {"content": "x"}}]})
+                        or FakeResp(200, {"choices": [{"message": {"content": "x"}}]}))
+    claude = ps.get_llm_provider(_add(client, preset="anthropic", tier="paid", base_url="https://api.anthropic.com/v1",
+                                      model="claude-haiku-5-5")["id"], include_secrets=True)
+    gpt = ps.get_llm_provider(_add(client, preset="openai", tier="paid", base_url="https://api.openai.com/v1",
+                                   model="gpt-6-luna")["id"], include_secrets=True)
+    llm.chat_completion(claude, [{"role": "user", "content": "hi"}])
+    llm.chat_completion(gpt, [{"role": "user", "content": "hi"}])
+    body_c = sent["https://api.anthropic.com/v1/chat/completions"]
+    body_o = sent["https://api.openai.com/v1/chat/completions"]
+    assert "temperature" not in body_c and "temperature" not in body_o
+    assert "max_completion_tokens" in body_o and "max_tokens" not in body_o
+    groq = ps.get_llm_provider(_add(client)["id"], include_secrets=True)
+    assert groq["temperature"] == 0.1
+
+
+# ------------------------------------------------------------------ pricing accuracy
+def test_accuracy_settings_validate_and_apply(client):
+    from backend.services.analytics import prices as pa
+
+    assert pa.direction_label(2.0) == "Rising"
+    r = client.put("/api/admin/accuracy", headers=ADMIN, json={"values": {"trend_threshold_pct": 3}})
+    assert r.status_code == 200
+    assert pa.direction_label(2.0) == "Stable"
+    bad = client.put("/api/admin/accuracy", headers=ADMIN, json={"values": {"trend_threshold_pct": 999}})
+    assert bad.status_code == 422
+    crossed = client.put("/api/admin/accuracy", headers=ADMIN, json={"values": {"min_price_pkr_per_kg": 5000, "max_price_pkr_per_kg": 4000}})
+    assert crossed.status_code == 422
+    client.put("/api/admin/accuracy", headers=ADMIN, json={"values": {"trend_threshold_pct": None}})
+    assert pa.direction_label(2.0) == "Rising"
+    assert client.get("/api/admin/accuracy").status_code == 401
+
+
+def test_price_bounds_and_spike_filter(client):
+    from datetime import datetime, timedelta
+
+    from backend.database.db import get_conn
+    from backend.models.price import PriceObservation
+    from backend.services.market_data.ingestion import store_observations
+    from backend.services.market_data.validation import validate_observation
+
+    base = dict(product_key="spike_test_rice", product_name="Spike test rice", product_type="rice", market="Test Mandi",
+                city="Multan", country="Pakistan", province="Punjab", price_category="wholesale", currency="PKR",
+                unit="PKR/kg", source_name="test", data_nature="synthetic", verification_status="synthetic_demo", variety="Test")
+    t0 = datetime.now() - timedelta(days=3)
+    obs = lambda price, d: PriceObservation(**base, price=price, observed_at=t0 + timedelta(days=d))  # noqa: E731
+    ps.set_accuracy({"max_price_pkr_per_kg": 250})
+    assert not validate_observation(obs(300, 0))
+    ps.set_accuracy({"max_price_pkr_per_kg": None, "max_jump_pct": 25})
+    with get_conn() as conn:
+        sid = conn.execute("SELECT id FROM price_sources LIMIT 1").fetchone()["id"]
+        stats = store_observations(conn, sid, [obs(200, 0), obs(210, 1), obs(400, 2)])
+    assert stats["inserted"] == 2 and stats["rejected"] == 1
+    assert any("suspicious jump" in k for k in stats["reasons"])
+    ps.set_accuracy({"max_jump_pct": None})

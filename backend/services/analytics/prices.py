@@ -9,7 +9,13 @@ from backend.services.news.service import latest_news  # noqa: F401  (re-exporte
 
 PKT = ZoneInfo("Asia/Karachi")
 LOWER_PUNJAB_COMPARE = ["Multan", "Muzaffargarh", "Bahawalpur", "Rahim Yar Khan"]
-THRESHOLD_PCT = 1.5
+THRESHOLD_PCT = 1.5  # default; the live value comes from Settings -> Pricing accuracy
+
+
+def _acc(name: str):
+    from backend.services.provider_settings import accuracy_value
+
+    return accuracy_value(name)
 
 _BASE = """
 SELECT mp.id, mp.price, mp.currency, mp.original_unit, mp.normalized_price, mp.normalized_unit, mp.price_category,
@@ -50,7 +56,7 @@ def freshness(observed_at: str, data_nature: str, ref: date | None = None) -> di
     ref = ref or today_pkt()
     d = datetime.fromisoformat(observed_at).date()
     age = (ref - d).days
-    stale_after = 45 if data_nature == "historical" else 2
+    stale_after = _acc("stale_after_days_periodic") if data_nature == "historical" else _acc("stale_after_days_daily")
     if age <= 0:
         label = "Observed today"
     elif age == 1:
@@ -146,9 +152,10 @@ def compare_markets(cities: list[str] | None = None, as_of: date | None = None, 
 def direction_label(pct: float | None) -> str:
     if pct is None:
         return "Insufficient Data"
-    if pct > THRESHOLD_PCT:
+    threshold = _acc("trend_threshold_pct")
+    if pct > threshold:
         return "Rising"
-    if pct < -THRESHOLD_PCT:
+    if pct < -threshold:
         return "Falling"
     return "Stable"
 

@@ -9,11 +9,14 @@ from backend.services.market_data.units import UnitError, canonical_unit, normal
 
 PKT = ZoneInfo("Asia/Karachi")
 
-# plausible ranges on the normalised basis. Values outside are rejected, never "fixed".
-BOUNDS = {
-    "PKR/kg": (10.0, 3000.0),
-    "USD/MT": (100.0, 5000.0),
-}
+# plausible ranges on the normalised basis (editable on Settings -> Pricing accuracy). Values outside are rejected,
+# never "fixed".
+def bounds(norm_unit: str) -> tuple[float, float]:
+    from backend.services.provider_settings import get_accuracy
+
+    a = get_accuracy()
+    return {"PKR/kg": (a["min_price_pkr_per_kg"], a["max_price_pkr_per_kg"]),
+            "USD/MT": (a["min_price_usd_per_mt"], a["max_price_usd_per_mt"])}[norm_unit]
 ALLOWED_CURRENCIES = {"PKR", "USD"}
 
 
@@ -49,7 +52,7 @@ def validate_observation(obs: PriceObservation, now: datetime | None = None) -> 
     if observed < now - timedelta(days=365 * 25):
         return ValidationResult(False, "observation timestamp is implausibly old")
     norm, norm_unit = normalize_price(obs.price, unit)
-    lo, hi = BOUNDS[norm_unit]
+    lo, hi = bounds(norm_unit)
     if not lo <= norm <= hi:
         return ValidationResult(False, f"normalised price {norm} {norm_unit} outside plausible range {lo}-{hi}")
     return ValidationResult(True, "", norm, norm_unit, unit)

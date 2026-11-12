@@ -147,39 +147,56 @@ source-grounded answers.
 **Regenerate the synthetic documents:** `python scripts/generate_synthetic_data.py`
 **Rebuild the notebook from source:** `python scripts/build_notebook.py`
 
-## 6. Settings: AI models and API keys
+## 6. Settings: AI models, fallback plan, pricing accuracy and API keys
 
-Open **Settings (Admin)** in the app and enter your `ADMIN_TOKEN`. There are two tabs:
+Open **Settings (Admin)** in the app and enter your `ADMIN_TOKEN` (from `.env`). It has five tabs.
 
-**AI models (chatbot)**
-1. Choose a ready-made template. Free: Ollama (local, no key), Groq, OpenRouter `:free` models, Google Gemini.
-   Paid: OpenAI, Anthropic Claude. Or choose *Custom* for any other OpenAI-compatible server.
-2. Paste the API key, click **List models** to see the exact model ids the provider offers now, pick one and click **Add**.
-3. Open the provider and click **Test connection**. This sends a one-word test message.
-4. Set the **priority**: the chatbot tries the lowest number first and falls back to the next one if a provider fails.
-   Put free models first and paid ones later as a backup, or switch paid ones off until you need them.
-   Adding a paid provider asks for an explicit confirmation.
+**🚀 Quick setup & fallback plan.** Click *Load the recommended model list*, then paste one key per provider and click
+*Save key & switch on*. Each model is tested straight away. The recommended order (model ids checked on 2026-11-12
+against each provider's documentation or live model list):
 
-With no model enabled, the chatbot still answers from the price database and documents (retrieval-only).
-Any AI answer that contains a number not found in the sources is rejected, whichever provider produced it.
+| Step | Model | Tier | Key from |
+|---|---|---|---|
+| 1 | Groq `llama-3.3-70b-versatile` | free tier | console.groq.com/keys |
+| 2 | Google Gemini `gemini-3.8-flash` | free tier | aistudio.google.com/apikey |
+| 3 | Groq `llama-3.1-8b-instant` (same Groq key) | free tier | |
+| 4 | OpenRouter `google/gemma-4-31b-it:free` | free | openrouter.ai/keys |
+| 5 | OpenRouter `openrouter/free` (any free model, same key) | free | |
+| 6 | Ollama `llama3.2` on your PC (no key, works offline) | free | ollama.com/download |
+| 7 | Anthropic `claude-haiku-5-5` | **paid**, off by default | platform.claude.com/settings/keys |
+| 8 | OpenAI `gpt-6-luna` | **paid**, off by default | platform.openai.com/api-keys |
+| 9 | Retrieval-only answer from the database and documents | always available | |
 
-**Compare models**: type a question (or pick a sample), tick the models, and see each answer side by side with
-its time, tier and whether the AI answer was accepted. The retrieval-only answer is shown as the baseline.
-Disabled models can be compared too, so you can try a paid model before switching it on.
+How the fallback works: the first ready model answers. If it fails (no internet, rate limit, outage, timeout), the next
+one is used, and the failed model is skipped for a cooldown period. Paid models only run if you switch them on and
+confirm billing. Whichever model answers, any number not found in your data is rejected.
+Free-tier limits and model names are set by each provider and change over time.
 
-**Data-source API keys**: PakDataHub (AMIS Punjab wholesale prices) and the Phase 2 paid market-data provider.
+**🤖 All models.** Edit, reorder, test, list the live models of, or delete any model, and add any other
+OpenAI-compatible model. Each model has its own temperature (empty = the model's default; Claude 5 and newer OpenAI
+models require this), answer length and length field name.
 
-Where it is stored: `storage/provider_settings.json` on the backend. The file is git-ignored, like `.env`, so it is never
-committed. Values saved there override `.env`. The browser only ever sees the last 4 characters of a key.
-Free-tier limits and model names are set by each provider and change over time, so check them on the provider's site.
+**🧪 Compare models.** Ask the same question to several models and see the answers side by side with time, tier
+and whether the AI answer was accepted. The retrieval-only answer is the baseline.
 
-The same actions are available as API endpoints (admin token required): `GET /api/admin/settings`,
-`POST/PUT/DELETE /api/admin/llm/providers[/{id}]`, `POST /api/admin/llm/providers/{id}/test`,
-`POST /api/admin/llm/models`, `POST /api/admin/llm/compare`, `PUT /api/admin/data-source-keys`. `GET /api/llm/status` (no token) shows the active order without keys.
+**🎯 Pricing accuracy.** Settings that apply immediately:
+* PKR/kg and USD/MT plausibility limits;
+* a spike filter that rejects a price that jumps more than X % from the previous price of the same series (off by default; 25 % recommended);
+* stale-after days for daily and monthly data;
+* the Rising/Falling threshold;
+* the number of document chunks and the minimum similarity used by the chatbot;
+* the AI timeout and the failure cooldown.
 
-**Adding a provider that is not OpenAI-compatible later:** add a new `chat_completion`-style function in
-`backend/services/rag/llm.py` and select it by the provider's `preset`. Everything else (storage, fallback order, the
-Settings page, the number check) stays the same.
+Rejected prices show the reason on *Data Source Status*. Nothing is silently changed.
+
+**🔑 Data-source keys.** PakDataHub (AMIS Punjab wholesale prices) and the Phase 2 paid market-data provider.
+
+Where it is stored: `storage/provider_settings.json` on the backend. The file is git-ignored, like `.env`.
+The browser only ever sees the last 4 characters of a key.
+Admin endpoints: `GET /api/admin/settings`, `POST/PUT/DELETE /api/admin/llm/providers[/{id}]`, `.../{id}/test`,
+`POST /api/admin/llm/models`, `POST /api/admin/llm/compare`, `POST /api/admin/llm/recommended-plan`,
+`PUT /api/admin/llm/provider-key`, `POST /api/admin/llm/reset-cooldowns`, `GET/PUT /api/admin/accuracy`,
+`PUT /api/admin/data-source-keys`. `GET /api/llm/status` (no token) shows the fallback plan without keys.
 
 ## 7. Scheduled price checks
 
@@ -208,7 +225,7 @@ All inputs are validated with Pydantic and FastAPI query constraints, and all SQ
 ## 9. Tests
 
 ```powershell
-python -m pytest -q                 # 68 automated tests (isolated temp DB, offline embeddings, no network)
+python -m pytest -q                 # 74 automated tests (isolated temp DB, offline embeddings, no network)
 python tests/frontend_smoke.py      # needs the backend running: renders all 7 Streamlit pages + one chat round-trip
 ```
 
