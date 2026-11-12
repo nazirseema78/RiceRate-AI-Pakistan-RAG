@@ -151,3 +151,23 @@ def test_data_source_keys(client):
     assert PakDataHubProvider().check_availability().available is False
     bad = client.put("/api/admin/data-source-keys", headers=ADMIN, json={"values": {"unknown_key": "x"}})
     assert bad.status_code == 422
+
+
+def test_compare_models(client, monkeypatch):
+    good = _add(client, name="Good", base_url="https://good.example/v1", enabled=False)["id"]
+    bad = _add(client, name="Bad", base_url="https://bad.example/v1")["id"]
+
+    def fake_post(url, **kw):
+        if "bad" in url:
+            return FakeResp(500, text="boom")
+        return FakeResp(200, {"choices": [{"message": {"content": "Model answer without numbers."}}]})
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+    r = client.post("/api/admin/llm/compare", headers=ADMIN, json={"question": "Multan 1121 paddy latest rate",
+                                                                   "provider_ids": [good, bad]})
+    assert r.status_code == 200
+    res = {x["label"].split(" - ")[0]: x for x in r.json()["results"]}
+    assert res["Retrieval only (no AI model)"]["used_llm"] is False
+    assert res["Good"]["used_llm"] is True and res["Good"]["answer"].startswith("Model answer")  # disabled models can be compared
+    assert res["Bad"]["used_llm"] is False and "failed" in res["Bad"]["note"]
+    assert client.post("/api/admin/llm/compare", json={"question": "x y"}).status_code == 401

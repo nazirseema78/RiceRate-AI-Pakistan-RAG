@@ -163,6 +163,10 @@ Open **Settings (Admin)** in the app and enter your `ADMIN_TOKEN`. There are two
 With no model enabled, the chatbot still answers from the price database and documents (retrieval-only).
 Any AI answer that contains a number not found in the sources is rejected, whichever provider produced it.
 
+**Compare models**: type a question (or pick a sample), tick the models, and see each answer side by side with
+its time, tier and whether the AI answer was accepted. The retrieval-only answer is shown as the baseline.
+Disabled models can be compared too, so you can try a paid model before switching it on.
+
 **Data-source API keys**: PakDataHub (AMIS Punjab wholesale prices) and the Phase 2 paid market-data provider.
 
 Where it is stored: `storage/provider_settings.json` on the backend. The file is git-ignored, like `.env`, so it is never
@@ -171,7 +175,7 @@ Free-tier limits and model names are set by each provider and change over time, 
 
 The same actions are available as API endpoints (admin token required): `GET /api/admin/settings`,
 `POST/PUT/DELETE /api/admin/llm/providers[/{id}]`, `POST /api/admin/llm/providers/{id}/test`,
-`POST /api/admin/llm/models`, `PUT /api/admin/data-source-keys`. `GET /api/llm/status` (no token) shows the active order without keys.
+`POST /api/admin/llm/models`, `POST /api/admin/llm/compare`, `PUT /api/admin/data-source-keys`. `GET /api/llm/status` (no token) shows the active order without keys.
 
 **Adding a provider that is not OpenAI-compatible later:** add a new `chat_completion`-style function in
 `backend/services/rag/llm.py` and select it by the provider's `preset`. Everything else (storage, fallback order, the
@@ -204,7 +208,7 @@ All inputs are validated with Pydantic and FastAPI query constraints, and all SQ
 ## 9. Tests
 
 ```powershell
-python -m pytest -q                 # 67 automated tests (isolated temp DB, offline embeddings, no network)
+python -m pytest -q                 # 68 automated tests (isolated temp DB, offline embeddings, no network)
 python tests/frontend_smoke.py      # needs the backend running: renders all 7 Streamlit pages + one chat round-trip
 ```
 

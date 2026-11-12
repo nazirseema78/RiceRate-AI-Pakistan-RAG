@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from backend.config import get_settings
 from backend.database.db import get_conn
-from backend.schemas.api import (BriefingResponse, ChatRequest, ChatResponse, CompareResponse, DataSourceKeysUpdate,
+from backend.schemas.api import (BriefingResponse, ChatRequest, ChatResponse, CompareModelsRequest, CompareResponse,
+                                 DataSourceKeysUpdate,
                                  GenericListResponse, HealthResponse, LLMProviderCreate, LLMProviderUpdate, ModelListRequest,
                                  PriceListResponse, RefreshRequest, RefreshResponse)
 from backend.services import provider_settings as ps
@@ -263,3 +264,28 @@ def admin_set_data_source_keys(req: DataSourceKeysUpdate):
         return {"data_source_keys": ps.set_data_source_keys(req.values)}
     except ps.SettingsError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.post("/admin/llm/compare", dependencies=[Depends(require_admin)])
+def admin_compare_models(req: CompareModelsRequest):
+    """Ask the same question to each chosen model (enabled or not) and return the answers side by side."""
+    saved = ps.list_llm_providers(include_secrets=True)
+    chosen = saved if req.provider_ids is None else [p for p in saved if p["id"] in set(req.provider_ids)]
+    runs = ([("Retrieval only (no AI model)", "free", [])] if req.include_retrieval_only else []) +            [(f"{p['name']} - {p['model']}", p["tier"], [p]) for p in chosen]
+    results = []
+    for label, tier, providers in runs:
+        started = time.monotonic()
+        try:
+            a = answer_question(req.question, providers=providers)
+            failed_llm = bool(providers) and not a["used_llm"]
+            results.append({"label": label, "tier": tier, "ok": True, "answer": a["answer"], "used_llm": a["used_llm"],
+                            "note": ("model failed or its answer was rejected - showing the retrieval-only answer"
+                                     if failed_llm else ""),
+                            "warnings": a["warnings"], "route": a["route"], "sources": len(a["sources"]),
+                            "seconds": round(time.monotonic() - started, 1)})
+        except Exception as e:  # one model's failure must not hide the others' results
+            log.exception("compare run failed for %s", label)
+            results.append({"label": label, "tier": tier, "ok": False, "answer": "", "used_llm": False,
+                            "note": f"error: {e.__class__.__name__}", "warnings": [], "route": "", "sources": 0,
+                            "seconds": round(time.monotonic() - started, 1)})
+    return {"question": req.question, "results": results}

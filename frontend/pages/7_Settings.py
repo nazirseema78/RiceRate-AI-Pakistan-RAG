@@ -46,7 +46,7 @@ if not cfg:
 presets = {p["preset"]: p for p in cfg["presets"]}
 TIER = {"free": "🟢 Free", "paid": "🟠 Paid"}
 
-tab_models, tab_keys = st.tabs(["🤖 AI models (chatbot)", "🔑 Data-source API keys"])
+tab_models, tab_compare, tab_keys = st.tabs(["🤖 AI models (chatbot)", "🧪 Compare models", "🔑 Data-source API keys"])
 
 # ================================================================== AI MODELS
 with tab_models:
@@ -183,3 +183,45 @@ with tab_keys:
                 flash("Data-source keys saved. They are used from the next refresh.")
                 st.rerun()
     st.caption("After adding the PakDataHub key, go to *Data Source Status* and run a refresh to fetch AMIS Punjab prices.")
+
+# ================================================================== COMPARE MODELS
+with tab_compare:
+    st.caption("Ask the same question to several models and compare their answers side by side. Disabled models can be "
+               "tested here too. Each model gets the same price facts and documents; paid models are billed per answer.")
+    SAMPLES = ["Aaj Multan mein 1121 paddy ka latest available rate kya hai?",
+               "Compare Multan and Karachi rice prices",
+               "Karachi mein rice rates kyun change ho rahay hain?",
+               "Latest available rice market report ka summary do.",
+               "What is the latest Thai 5% export benchmark price?"]
+    sample = st.selectbox("Sample question", ["(type my own)"] + SAMPLES)
+    with st.form("compare"):
+        question = st.text_area("Question", "" if sample == "(type my own)" else sample, height=80)
+        labels = {p["id"]: f"{p['name']} - {p['model']} ({p['tier']})" for p in provs}
+        chosen = st.multiselect("Models to compare", list(labels), default=list(labels), format_func=labels.get)
+        base = st.checkbox("Also show the retrieval-only answer (no AI model) as the baseline", True)
+        go = st.form_submit_button("▶️ Run comparison", type="primary")
+    if not provs:
+        st.info("No AI model saved yet - add one in the first tab. You can still run the retrieval-only baseline.")
+    if go:
+        if len(question.strip()) < 2:
+            st.error("Type a question.")
+        else:
+            with st.spinner("Asking each model..."):
+                res = call("POST", "/api/admin/llm/compare",
+                           {"question": question, "provider_ids": chosen, "include_retrieval_only": base}, timeout=600)
+            if res:
+                st.session_state["compare_result"] = res
+    res = st.session_state.get("compare_result")
+    if res:
+        st.markdown(f"**Question:** {res['question']}")
+        st.dataframe(pd.DataFrame([{"model": r["label"], "tier": TIER.get(r["tier"], r["tier"]),
+                                    "AI answer used": "yes" if r["used_llm"] else "no",
+                                    "seconds": r["seconds"], "sources": r["sources"], "note": r["note"]}
+                                   for r in res["results"]]), width="stretch", hide_index=True)
+        cols = st.columns(min(len(res["results"]), 3) or 1)
+        for i, r in enumerate(res["results"]):
+            with cols[i % len(cols)]:
+                st.markdown(f"#### {r['label']}")
+                st.caption(f"{TIER.get(r['tier'], r['tier'])} · {r['seconds']} s · route: {r['route'] or '-'}"
+                           + (f" · ⚠️ {r['note']}" if r["note"] else ""))
+                st.markdown(r["answer"] or "_no answer_")

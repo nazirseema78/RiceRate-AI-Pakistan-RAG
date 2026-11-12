@@ -186,7 +186,8 @@ def _numbers_grounded(answer: str, evidence: str) -> bool:
     return True
 
 
-def answer_question(question: str, history: list[dict] | None = None) -> dict:
+def answer_question(question: str, history: list[dict] | None = None, providers: list[dict] | None = None) -> dict:
+    """providers: None = the configured fallback chain; [] = no LLM; [p] = only that provider (model comparison)."""
     question = question.strip()[:1000]
     rq = route_question(question)
     L = T[rq.language]
@@ -212,7 +213,7 @@ def answer_question(question: str, history: list[dict] | None = None) -> dict:
 
     context_text = "\n---\n".join(f"[{c['source']} | {c.get('publication_date')}] {c['text']}" for c in chunks)
     facts_text = "\n".join(facts)
-    generated, llm_name = llm.generate(question, facts_text, context_text, rq.language, history)
+    generated, llm_name = llm.generate(question, facts_text, context_text, rq.language, history, providers=providers)
     used_llm = False
     if generated and _numbers_grounded(generated, facts_text + "\n" + context_text):
         body, used_llm = generated, True

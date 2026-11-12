@@ -150,6 +150,12 @@ class ModelListRequest(BaseModel):
     api_key: str | None = Field(None, max_length=500)
 
 
+class CompareModelsRequest(BaseModel):
+    question: str = Field(..., min_length=2, max_length=1000)
+    provider_ids: list[str] | None = Field(None, max_length=10, description="None = every saved provider")
+    include_retrieval_only: bool = True
+
+
 class DataSourceKeysUpdate(BaseModel):
     """Each value: omit/null = keep, "" = remove (falls back to .env), text = save."""
     values: dict[str, str | None]

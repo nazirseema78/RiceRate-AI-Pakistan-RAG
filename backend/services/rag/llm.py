@@ -103,9 +103,11 @@ def chain_summary() -> str:
 
 
 def generate(question: str, facts_text: str, context_text: str, language: str,
-             history: list[dict] | None = None) -> tuple[str | None, str | None]:
-    """Returns (answer, provider name). (None, None) if no provider is enabled or all of them failed."""
-    chain = ps.active_llm_chain()
+             history: list[dict] | None = None, providers: list[dict] | None = None) -> tuple[str | None, str | None]:
+    """Returns (answer, provider name). (None, None) if no provider is enabled or all of them failed.
+
+    providers: override the configured chain (used by the model comparison tool); [] means no LLM."""
+    chain = ps.active_llm_chain() if providers is None else providers
     if not chain:
         return None, None
     lang = "Pakistani Urdu written in Roman script (or Urdu script if the user wrote Urdu script)" if language == "ur" else "English"
