@@ -157,18 +157,24 @@ against each provider's documentation or live model list):
 
 | Step | Model | Tier | Key from |
 |---|---|---|---|
-| 1 | Groq `llama-3.3-70b-versatile` | free tier | console.groq.com/keys |
-| 2 | Google Gemini `gemini-3.8-flash` | free tier | aistudio.google.com/apikey |
-| 3 | Groq `llama-3.1-8b-instant` (same Groq key) | free tier | |
-| 4 | OpenRouter `google/gemma-4-31b-it:free` | free | openrouter.ai/keys |
-| 5 | OpenRouter `openrouter/free` (any free model, same key) | free | |
+| 1 | OpenRouter `openrouter/free` (routes to any free model) | free | openrouter.ai/keys |
+| 2 | OpenRouter `google/gemma-4-31b-it:free` (same key) | free | |
+| 3 | Groq `openai/gpt-oss-120b` | free tier | console.groq.com/keys |
+| 4 | Groq `qwen/qwen3.8-27b` (same key; length limit 1000 on the free tier) | free tier | |
+| 5 | Google Gemini `gemini-3.5-flash`, then `gemini-3.8-flash` | free tier | aistudio.google.com/apikey |
 | 6 | Ollama `llama3.2` on your PC (no key, works offline) | free | ollama.com/download |
 | 7 | Anthropic `claude-haiku-5-5` | **paid**, off by default | platform.claude.com/settings/keys |
 | 8 | OpenAI `gpt-6-luna` | **paid**, off by default | platform.openai.com/api-keys |
 | 9 | Retrieval-only answer from the database and documents | always available | |
 
-How the fallback works: the first ready model answers. If it fails (no internet, rate limit, outage, timeout), the next
-one is used, and the failed model is skipped for a cooldown period. Paid models only run if you switch them on and
+The models offered can differ per account (for example, Llama models were not offered to the Groq account used to
+test this project), so use *List models* and *Test* after adding a key.
+
+How the fallback works: the first ready model answers. If it fails (no internet, rate limit, outage, timeout, wrong
+model id, or an empty "thinking-only" reply) the next one is used: rate limits get one quick retry, and a failed model
+is skipped for a cooldown period (1 hour for a model id your key cannot use). Each chatbot answer shows which model
+answered and every attempt (*AI model attempts*). Follow-up questions ("aur Bahawalpur mein?") keep the product and
+topic of the previous question, and answers use the user's language and script (English, Roman Urdu or Urdu script). Paid models only run if you switch them on and
 confirm billing. Whichever model answers, any number not found in your data is rejected.
 Free-tier limits and model names are set by each provider and change over time.
 
@@ -225,7 +231,7 @@ All inputs are validated with Pydantic and FastAPI query constraints, and all SQ
 ## 9. Tests
 
 ```powershell
-python -m pytest -q                 # 74 automated tests (isolated temp DB, offline embeddings, no network)
+python -m pytest -q                 # 84 automated tests (isolated temp DB, offline embeddings, no network)
 python tests/frontend_smoke.py      # needs the backend running: renders all 7 Streamlit pages + one chat round-trip
 ```
 

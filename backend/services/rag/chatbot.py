@@ -21,6 +21,7 @@ T = {
            "stale": "Note: no observation is dated today. The figures shown are the latest available, with their original dates - they are not today's rates.",
            "uncertain": "The evidence describes past prices only. Future market direction is uncertain.",
            "nollm": "(Retrieval-only answer: no LLM configured.)",
+           "llmfail": "(Retrieval-only answer: every configured AI model failed or was unavailable - see the model attempts.)",
            "insufficient": "Current evidence is insufficient to state a market direction."},
     "ur": {"facts": "Darj shuda qeematein (price database)", "docs": "Market reports se (retrieved documents)",
            "interp": "Tashreeh (interpretation)", "none": "Is sawal ke liye koi mutabiq price observation database mein maujood nahi.",
@@ -29,6 +30,7 @@ T = {
            "stale": "Note: aaj ki tareekh ki koi observation maujood nahi. Neeche diye gaye rates aakhri dastiyab (latest available) hain, apni asal tareekh ke sath - yeh aaj ke rates nahi.",
            "uncertain": "Yeh shawahid sirf guzishta qeematon ke hain. Mustaqbil mein market ka rukh ghair yaqeeni hai.",
            "nollm": "(Sirf retrieval par mabni jawab: koi LLM configure nahi.)",
+           "llmfail": "(Sirf retrieval par mabni jawab: tamam AI models fail ya dastiyab nahi thay - model attempts dekhein.)",
            "insufficient": "Mojooda shawahid market ka rukh batane ke liye nakafi hain."},
 }
 DIRECTION_UR = {"Rising": "Barh raha (Rising)", "Falling": "Kam ho raha (Falling)", "Stable": "Mustahkam (Stable)",
@@ -186,10 +188,48 @@ def _numbers_grounded(answer: str, evidence: str) -> bool:
     return True
 
 
+FOLLOWUP = re.compile(r"^\s*(aur|or|and|what about|how about|phir|tou|uska|iska|is ka|us ka|wahan|yahan|same|also)\b|\b(bhi|wahan|uska|iska)\b",
+                      re.IGNORECASE)
+
+
+def resolve_followup(rq, history: list[dict] | None):
+    """Follow-up questions ("aur Bahawalpur mein?", "what about last 30 days?") inherit what is missing from the
+    previous user question: topic (intents), product, variety, cities and international focus."""
+    rq.followup_of = None
+    prev = next((h.get("content") for h in reversed(history or []) if h.get("role") == "user" and isinstance(h.get("content"), str)), None)
+    if not prev:
+        return rq
+    has_topic = bool({"latest", "compare", "trend", "quotation", "explain", "news"} & set(rq.intents))
+    # a follow-up either starts like one ("aur Bahawalpur mein?", "what about...") or is a short question with no topic
+    if not (FOLLOWUP.search(rq.question) or (len(rq.question.split()) <= 6 and not has_topic)):
+        return rq
+    pr = route_question(prev[:1000])
+    changed = False
+    if not ({"latest", "compare", "trend", "quotation", "explain", "news"} & set(rq.intents)) and pr.intents:
+        rq.intents = sorted(set(rq.intents) | set(pr.intents))
+        rq.route = pr.route if rq.route == "rag" else rq.route
+        if "trend" in rq.intents and not re.search(r"\d+\s*(din|days?)|month|mahina", rq.question.lower()):
+            rq.window_days = pr.window_days
+        changed = True
+    for attr in ("product_type", "variety"):
+        if not getattr(rq, attr) and getattr(pr, attr):
+            setattr(rq, attr, getattr(pr, attr))
+            changed = True
+    if not rq.cities and pr.cities:
+        rq.cities = pr.cities
+        changed = True
+    if not rq.international and pr.international and not rq.cities:
+        rq.international = True
+        changed = True
+    if changed:
+        rq.followup_of = prev[:200]
+    return rq
+
+
 def answer_question(question: str, history: list[dict] | None = None, providers: list[dict] | None = None) -> dict:
     """providers: None = the configured fallback chain; [] = no LLM; [p] = only that provider (model comparison)."""
     question = question.strip()[:1000]
-    rq = route_question(question)
+    rq = resolve_followup(route_question(question), history)
     L = T[rq.language]
     facts, sources, interp, flags = ([], [], [], {"synthetic": False, "stale": False, "insufficient": False})
     if rq.route in ("structured", "hybrid"):
@@ -213,9 +253,11 @@ def answer_question(question: str, history: list[dict] | None = None, providers:
 
     context_text = "\n---\n".join(f"[{c['source']} | {c.get('publication_date')}] {c['text']}" for c in chunks)
     facts_text = "\n".join(facts)
-    generated, llm_name = llm.generate(question, facts_text, context_text, rq.language, history, providers=providers)
+    gen = llm.generate_detailed(question, facts_text, context_text, rq.language, history, providers=providers)
+    generated, llm_name = gen["text"], gen["model"]
     used_llm = False
-    if generated and _numbers_grounded(generated, facts_text + "\n" + context_text):
+    # numbers the user typed (e.g. the variety "386") may be repeated; every other number must come from the sources
+    if generated and _numbers_grounded(generated, facts_text + "\n" + context_text + "\n" + question):
         body, used_llm = generated, True
     else:
         if generated:
@@ -230,8 +272,10 @@ def answer_question(question: str, history: list[dict] | None = None, providers:
         if interp:
             parts.append(f"**{L['interp']}:**\n" + "\n".join(f"- {i}" for i in interp))
         body = "\n\n".join(parts)
-        if not generated:
+        if not gen["configured"]:
             body += f"\n\n_{L['nollm']}_"
+        elif not generated:
+            body += f"\n\n_{L['llmfail']}_"
     if warnings:
         body += "\n\n" + "\n".join(f"> {w}" for w in warnings)
     # de-duplicate sources
@@ -245,4 +289,5 @@ def answer_question(question: str, history: list[dict] | None = None, providers:
             "entities": {"cities": rq.cities, "product_type": rq.product_type, "variety": rq.variety, "window_days": rq.window_days,
                          "international": rq.international},
             "facts": facts, "sources": uniq[:15], "retrieved_chunks": [{k: c[k] for k in ("source", "score", "text")} for c in chunks],
-            "used_llm": used_llm, "llm_provider_used": llm_name if used_llm else None, "warnings": warnings, "contains_synthetic": flags["synthetic"]}
+            "used_llm": used_llm, "llm_provider_used": llm_name if used_llm else None, "llm_attempts": gen["attempts"],
+            "followup_of": rq.followup_of, "warnings": warnings, "contains_synthetic": flags["synthetic"]}

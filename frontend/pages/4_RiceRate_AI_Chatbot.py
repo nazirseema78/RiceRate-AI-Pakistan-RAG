@@ -28,7 +28,14 @@ with st.sidebar:
 
 
 def render_meta(meta: dict) -> None:
-    st.caption(f"Route: **{meta['route']}** · language: {meta['language']} · LLM used: {meta.get('llm_provider_used') or 'no (retrieval-only)'}")
+    st.caption(f"Route: **{meta['route']}** · language: {meta['language']} · LLM used: "
+               f"**{meta.get('llm_provider_used') or 'no (retrieval-only)'}**"
+               + (f" · follow-up of: “{meta['followup_of'][:80]}”" if meta.get("followup_of") else ""))
+    attempts = meta.get("llm_attempts") or []
+    if attempts:
+        with st.expander(f"AI model attempts ({sum(a['ok'] for a in attempts)} answered / {len(attempts)} tried)"):
+            st.dataframe(pd.DataFrame([{"model": a["model"], "result": "✅ answered" if a["ok"] else "❌ " + a["detail"],
+                                        "seconds": a["seconds"]} for a in attempts]), width="stretch", hide_index=True)
     if meta["sources"]:
         with st.expander(f"Sources and observation dates ({len(meta['sources'])})"):
             df = pd.DataFrame(meta["sources"])

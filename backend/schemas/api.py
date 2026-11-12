@@ -93,6 +93,8 @@ class ChatResponse(BaseModel):
     retrieved_chunks: list[dict[str, Any]]
     used_llm: bool
     llm_provider_used: str | None = None
+    llm_attempts: list[dict[str, Any]] = []
+    followup_of: str | None = None
     warnings: list[str]
     contains_synthetic: bool
 

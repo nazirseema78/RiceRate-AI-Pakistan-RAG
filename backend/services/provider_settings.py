@@ -37,20 +37,21 @@ _lock = threading.RLock()
 # ---------------------------------------------------------------------------------------------------------------
 PRESETS: list[dict] = [
     {"preset": "groq", "name": "Groq", "tier": "free", "base_url": "https://api.groq.com/openai/v1",
-     "model_hint": "llama-3.3-70b-versatile", "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant",
-                                                         "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
-     "needs_key": True, "signup_url": "https://console.groq.com/keys", "temperature": 0.1, "max_tokens": 900,
-     "token_param": "max_tokens", "notes": "Hosted, very fast, free tier with rate limits set by Groq."},
+     "model_hint": "openai/gpt-oss-120b", "models": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b",
+                                                     "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+     "needs_key": True, "signup_url": "https://console.groq.com/keys", "temperature": 0.1, "max_tokens": 2500,
+     "token_param": "max_tokens", "notes": "Hosted, very fast, free tier with rate limits set by Groq. Models offered differ "
+                                           "per account - use List models (Llama models were not offered to this account)."},
     {"preset": "gemini", "name": "Google Gemini (AI Studio)", "tier": "free",
      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model_hint": "gemini-3.8-flash",
-     "models": ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"],
-     "needs_key": True, "signup_url": "https://aistudio.google.com/apikey", "temperature": 0.1, "max_tokens": 900,
+     "models": ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+     "needs_key": True, "signup_url": "https://aistudio.google.com/apikey", "temperature": 0.1, "max_tokens": 2500,
      "token_param": "max_tokens", "notes": "Free tier listed by Google for these Flash models; Google's free-tier terms apply "
                                            "(check whether free-tier prompts may be used to improve Google products)."},
     {"preset": "openrouter_free", "name": "OpenRouter (free models)", "tier": "free", "base_url": "https://openrouter.ai/api/v1",
      "model_hint": "google/gemma-4-31b-it:free", "models": ["google/gemma-4-31b-it:free", "google/gemma-4-26b-a4b-it:free",
                                                             "nvidia/nemotron-3.5-super-vl:free", "openrouter/free"],
-     "needs_key": True, "signup_url": "https://openrouter.ai/keys", "temperature": 0.1, "max_tokens": 900,
+     "needs_key": True, "signup_url": "https://openrouter.ai/keys", "temperature": 0.1, "max_tokens": 2500,
      "token_param": "max_tokens", "notes": "Model ids ending in ':free' cost nothing (rate-limited); 'openrouter/free' picks any "
                                            "free model. Other OpenRouter models are paid."},
     {"preset": "ollama", "name": "Ollama (local, on this PC)", "tier": "free", "base_url": "http://localhost:11434/v1",
@@ -77,11 +78,12 @@ PRESET_BY_KEY = {p["preset"]: p for p in PRESETS}
 # models, then the local model (works without internet), and paid models LAST and switched off until you choose.
 # After every model, the chatbot's final fallback is always the retrieval-only answer (no AI model needed).
 RECOMMENDED_PLAN: list[tuple[str, str, int, str]] = [
-    ("groq", "llama-3.3-70b-versatile", 10, "Groq Llama 3.3 70B"),
-    ("gemini", "gemini-3.8-flash", 20, "Gemini 3.8 Flash"),
-    ("groq", "llama-3.1-8b-instant", 30, "Groq Llama 3.1 8B (fast backup)"),
-    ("openrouter_free", "google/gemma-4-31b-it:free", 40, "OpenRouter Gemma 4 31B (free)"),
-    ("openrouter_free", "openrouter/free", 50, "OpenRouter auto free model"),
+    ("openrouter_free", "openrouter/free", 10, "OpenRouter auto free model"),
+    ("openrouter_free", "google/gemma-4-31b-it:free", 20, "OpenRouter Gemma 4 31B (free)"),
+    ("groq", "openai/gpt-oss-120b", 30, "Groq GPT-OSS 120B"),
+    ("gemini", "gemini-3.8-flash", 40, "Gemini 3.8 Flash"),
+    ("groq", "qwen/qwen3.8-27b", 50, "Groq Qwen 3.8 27B"),
+    ("gemini", "gemini-3.5-flash", 55, "Gemini 3.5 Flash (backup)"),
     ("ollama", "llama3.2", 60, "Ollama Llama 3.2 (local, offline)"),
     ("anthropic", "claude-haiku-5-5", 90, "Claude Haiku 5.5 (paid backup)"),
     ("openai", "gpt-6-luna", 95, "OpenAI GPT-6 Luna (paid backup)"),
@@ -355,13 +357,15 @@ def install_recommended_plan() -> dict:
     with _lock:
         data = load()
         have = {(p.get("preset"), p.get("model")) for p in data["llm_providers"]}
+        saved_keys = {p.get("preset"): p.get("api_key") for p in data["llm_providers"] if p.get("api_key")}
         added = []
         for preset, model, priority, name in RECOMMENDED_PLAN:
             if (preset, model) in have:
                 continue
             pre = PRESET_BY_KEY[preset]
             p = {"id": uuid.uuid4().hex[:12], "name": name, "preset": preset, "tier": pre["tier"], "base_url": pre["base_url"],
-                 "model": model, "api_key": "", "enabled": False, "priority": priority, "notes": pre["notes"][:500],
+                 "model": model, "api_key": saved_keys.get(preset, ""),
+                 "enabled": bool(saved_keys.get(preset)) and pre["tier"] == "free", "priority": priority, "notes": pre["notes"][:500],
                  "created_at": now_iso(), "updated_at": now_iso(), "last_test_at": None, "last_test_ok": None,
                  "last_test_message": "", **_tuning({"preset": preset})}
             data["llm_providers"].append(p)

@@ -35,6 +35,7 @@ class RoutedQuestion:
     variety: str | None = None
     window_days: int = 7
     international: bool = False
+    followup_of: str | None = None
 
 
 def route_question(question: str) -> RoutedQuestion:

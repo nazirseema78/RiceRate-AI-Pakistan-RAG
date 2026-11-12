@@ -189,7 +189,7 @@ def test_one_key_enables_all_models_of_that_provider(client):
     r = client.put("/api/admin/llm/provider-key", headers=ADMIN, json={"preset": "groq", "api_key": SECRET})
     assert r.status_code == 200 and r.json()["updated"] == 2 and SECRET not in r.text
     names = [p["name"] for p in ps.active_llm_chain()]
-    assert names == ["Groq Llama 3.3 70B", "Groq Llama 3.1 8B (fast backup)"]
+    assert names == ["Groq GPT-OSS 120B", "Groq Qwen 3.8 27B"]
     status = client.get("/api/llm/status").json()["fallback_plan"]
     assert status[-1]["name"].startswith("Retrieval-only")
 
@@ -272,3 +272,105 @@ def test_price_bounds_and_spike_filter(client):
     assert stats["inserted"] == 2 and stats["rejected"] == 1
     assert any("suspicious jump" in k for k in stats["reasons"])
     ps.set_accuracy({"max_jump_pct": None})
+
+
+# ------------------------------------------------------------------ answer pipeline
+def _ok(text):
+    return FakeResp(200, {"choices": [{"message": {"content": text}, "finish_reason": "stop"}]})
+
+
+def test_empty_answer_falls_through_to_next_model(client, monkeypatch):
+    llm.reset_cooldowns()
+    _add(client, name="Thinker", base_url="https://thinker.example/v1", priority=1)
+    _add(client, name="Answerer", base_url="https://answerer.example/v1", priority=2)
+    monkeypatch.setattr(llm.requests, "post", lambda url, **kw: FakeResp(
+        200, {"choices": [{"message": {"content": None}, "finish_reason": "length"}]}) if "thinker" in url else _ok("fine"))
+    r = llm.generate_detailed("q", "f", "c", "en")
+    assert r["text"] == "fine" and r["model"].startswith("Answerer")
+    assert r["attempts"][0]["ok"] is False and "empty answer" in r["attempts"][0]["detail"]
+    llm.reset_cooldowns()
+
+
+def test_rate_limit_is_retried_once(client, monkeypatch):
+    llm.reset_cooldowns()
+    _add(client, name="Busy", base_url="https://busy.example/v1")
+    calls = []
+
+    def fake_post(url, **kw):
+        calls.append(url)
+        return FakeResp(429, text="slow down") if len(calls) == 1 else _ok("after retry")
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    assert llm.generate("q", "f", "c", "en")[0] == "after retry" and len(calls) == 2
+
+
+def test_chat_uses_llm_and_reports_model_and_attempts(client, monkeypatch):
+    llm.reset_cooldowns()
+    _add(client, name="Down", base_url="https://down.example/v1", priority=1)
+    _add(client, name="Up", base_url="https://up.example/v1", model="good-model", priority=2)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm.requests, "post", lambda url, **kw: FakeResp(503, text="overloaded") if "down" in url
+                        else _ok("Multan mein latest available rate neeche facts mein hai."))
+    r = client.post("/api/chat", json={"question": "Aaj Multan mein 1121 paddy ka latest available rate kya hai?"}).json()
+    assert r["used_llm"] is True and r["llm_provider_used"] == "Up (good-model)"
+    assert [a["ok"] for a in r["llm_attempts"]] == [False, True]
+    assert "no LLM configured" not in r["answer"]
+    llm.reset_cooldowns()
+
+
+def test_llm_answer_with_invented_price_is_rejected(client, monkeypatch):
+    llm.reset_cooldowns()
+    _add(client)
+    monkeypatch.setattr(llm.requests, "post", lambda url, **kw: _ok("Multan 1121 paddy rate is 9,999 PKR/40kg today."))
+    r = client.post("/api/chat", json={"question": "Multan 1121 paddy latest rate"}).json()
+    assert r["used_llm"] is False and "9,999" not in r["answer"] and any("discarded" in w for w in r["warnings"])
+
+
+def test_all_models_failing_says_so(client, monkeypatch):
+    llm.reset_cooldowns()
+    _add(client)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm.requests, "post", lambda url, **kw: FakeResp(503, text="down"))
+    r = client.post("/api/chat", json={"question": "Multan 1121 paddy latest rate"}).json()
+    assert r["used_llm"] is False and "every configured AI model failed" in r["answer"]
+    llm.reset_cooldowns()
+
+
+def test_followup_question_inherits_context(client):
+    hist = [{"role": "user", "content": "Aaj Multan mein 1121 paddy ka latest available rate kya hai?"},
+            {"role": "assistant", "content": "..."}]
+    r = client.post("/api/chat", json={"question": "aur Bahawalpur mein?", "history": hist}).json()
+    assert r["route"] == "structured" and r["entities"]["product_type"] == "paddy"
+    assert r["entities"]["cities"] == ["Bahawalpur"] and r["followup_of"]
+    assert any("Bahawalpur" in f for f in r["facts"])
+    alone = client.post("/api/chat", json={"question": "aur Bahawalpur mein?"}).json()
+    assert alone["followup_of"] is None
+
+
+def test_history_notes_are_not_sent_back_to_the_model():
+    text = "Rate is 4,790 PKR/40kg.\n\n> Note: yeh SYNTHETIC DEMO DATA hai\n_(Retrieval-only answer)_"
+    assert llm._clean_history(text) == "Rate is 4,790 PKR/40kg."
+
+
+def test_reply_language_follows_the_users_script():
+    assert "Roman Urdu" in llm.reply_language("Multan mein rate kya hai?", "ur")
+    assert "Urdu script" in llm.reply_language("ملتان میں ریٹ کیا ہے؟", "ur")
+    assert llm.reply_language("What is the rate?", "en") == "English"
+
+
+def test_new_topic_is_not_treated_as_followup(client):
+    hist = [{"role": "user", "content": "Pichlay 7 din mein 1121 rice ka rate barha hai ya kam hua?"}]
+    r = client.post("/api/chat", json={"question": "Why are rice prices changing in Karachi?", "history": hist}).json()
+    assert r["followup_of"] is None
+    r2 = client.post("/api/chat", json={"question": "what about Bahawalpur?", "history": hist}).json()
+    assert r2["followup_of"] and r2["entities"]["variety"] == "1121"
+
+
+def test_numbers_from_the_question_are_allowed(client, monkeypatch):
+    llm.reset_cooldowns()
+    _add(client)
+    monkeypatch.setattr(llm.requests, "post", lambda url, **kw: _ok("No price for 386 broken rice in Lahore is in the data, so it is not available."))
+    r = client.post("/api/chat", json={"question": "What is the price of 386 broken rice in Lahore today?"}).json()
+    assert r["used_llm"] is True and "not available" in r["answer"]
+    llm.reset_cooldowns()
